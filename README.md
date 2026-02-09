@@ -32,6 +32,7 @@ Minimal **Firecracker VM manager** in Go.
 - `systemd` service model: `fc@<uuid>.service`
 - Basic port publish + sequential IP allocation
 - Per-VM lock file to prevent lifecycle race conditions
+- Structured logging with configurable level/format
 - Best-effort hooks:
   - `onCreate`
   - `onDelete`
@@ -119,6 +120,14 @@ Environment variables:
 - `MGR_PORT_START` (default `20000`)
 - `MGR_PORT_END` (default `40000`)
 - `MGR_GUEST_CIDR` (default `172.30.0.0/24`)
+- `MGR_LOG_LEVEL` (default `info`, values: `debug|info|warn|error`)
+- `MGR_LOG_FORMAT` (default `json`, values: `json|text`)
+
+Enable verbose debugging:
+
+```bash
+MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=text go run ./cmd/manager
+```
 
 ## Systemd template and scripts
 

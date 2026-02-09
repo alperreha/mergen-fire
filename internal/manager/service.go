@@ -55,17 +55,31 @@ func NewService(store Store, systemdClient systemd.Client, hookRunner *hooks.Run
 }
 
 func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (string, error) {
+	s.logger.Debug(
+		"create vm request received",
+		"rootfs", req.RootFS,
+		"kernel", req.Kernel,
+		"vcpu", req.VCPU,
+		"memMiB", req.MemMiB,
+		"portRequests", len(req.Ports),
+		"autoStart", req.AutoStart,
+	)
+
 	if err := validateCreate(req); err != nil {
+		s.logger.Debug("create vm validation failed", "error", err)
 		return "", fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
 	if err := validatePathExists(req.RootFS); err != nil {
+		s.logger.Debug("create vm rootfs validation failed", "path", req.RootFS, "error", err)
 		return "", fmt.Errorf("%w: rootfs %v", ErrInvalidRequest, err)
 	}
 	if err := validatePathExists(req.Kernel); err != nil {
+		s.logger.Debug("create vm kernel validation failed", "path", req.Kernel, "error", err)
 		return "", fmt.Errorf("%w: kernel %v", ErrInvalidRequest, err)
 	}
 	if strings.TrimSpace(req.DataDisk) != "" {
 		if err := validatePathExists(req.DataDisk); err != nil {
+			s.logger.Debug("create vm data disk validation failed", "path", req.DataDisk, "error", err)
 			return "", fmt.Errorf("%w: dataDisk %v", ErrInvalidRequest, err)
 		}
 	}
@@ -77,8 +91,10 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 
 	guestIP, ports, err := s.allocator.Allocate(metas, req.Ports)
 	if err != nil {
+		s.logger.Debug("resource allocation failed", "error", err)
 		return "", fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
+	s.logger.Debug("resource allocation completed", "guestIP", guestIP, "allocatedPorts", len(ports))
 
 	vmID, err := newUUIDv4()
 	if err != nil {
@@ -103,23 +119,29 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 	vmCfg := firecracker.RenderVMConfig(req, meta)
 	hooksCfg := hooksFromMap(req.Hooks)
 	paths := s.store.PathsFor(vmID)
+	meta.Paths = paths
 	env := s.baseEnv(meta, paths, req.ExtraEnv)
 	if _, err := s.store.SaveVM(vmID, vmCfg, meta, hooksCfg, env); err != nil {
+		s.logger.Error("failed to persist vm files", "vmID", vmID, "error", err)
 		return "", err
 	}
+	s.logger.Debug("vm files persisted", "vmID", vmID, "configDir", paths.ConfigDir)
 
 	s.triggerHooks(model.HookOnCreate, meta, nil)
 
 	if req.AutoStart {
+		s.logger.Debug("auto-start enabled, starting vm", "vmID", vmID)
 		if err := s.StartVM(ctx, vmID); err != nil {
 			return "", err
 		}
 	}
 
+	s.logger.Info("vm created", "vmID", vmID, "guestIP", guestIP, "publishedPorts", len(ports))
 	return vmID, nil
 }
 
 func (s *Service) StartVM(ctx context.Context, id string) error {
+	s.logger.Debug("start vm requested", "vmID", id)
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("%w: id is empty", ErrInvalidRequest)
 	}
@@ -148,10 +170,12 @@ func (s *Service) StartVM(ctx context.Context, id string) error {
 	if err == nil {
 		s.triggerHooks(model.HookOnStart, meta, nil)
 	}
+	s.logger.Info("vm started", "vmID", id)
 	return nil
 }
 
 func (s *Service) StopVM(ctx context.Context, id string) error {
+	s.logger.Debug("stop vm requested", "vmID", id)
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("%w: id is empty", ErrInvalidRequest)
 	}
@@ -180,10 +204,12 @@ func (s *Service) StopVM(ctx context.Context, id string) error {
 	if err == nil {
 		s.triggerHooks(model.HookOnStop, meta, nil)
 	}
+	s.logger.Info("vm stopped", "vmID", id)
 	return nil
 }
 
 func (s *Service) DeleteVM(ctx context.Context, id string, retainData bool) error {
+	s.logger.Debug("delete vm requested", "vmID", id, "retainData", retainData)
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("%w: id is empty", ErrInvalidRequest)
 	}
@@ -228,10 +254,12 @@ func (s *Service) DeleteVM(ctx context.Context, id string, retainData bool) erro
 	}
 
 	s.triggerHooks(model.HookOnDelete, meta, &vmHooks)
+	s.logger.Info("vm deleted", "vmID", id, "retainData", retainData)
 	return nil
 }
 
 func (s *Service) GetVM(ctx context.Context, id string) (model.VMSummary, error) {
+	s.logger.Debug("get vm requested", "vmID", id)
 	if strings.TrimSpace(id) == "" {
 		return model.VMSummary{}, fmt.Errorf("%w: id is empty", ErrInvalidRequest)
 	}
@@ -252,6 +280,7 @@ func (s *Service) GetVM(ctx context.Context, id string) (model.VMSummary, error)
 	if err != nil {
 		return model.VMSummary{}, err
 	}
+	s.logger.Debug("vm status collected", "vmID", id, "systemdActive", systemdStatus.Active, "socketPresent", socketPresent)
 
 	return model.VMSummary{
 		ID:        meta.ID,
@@ -280,6 +309,7 @@ func (s *Service) GetVM(ctx context.Context, id string) (model.VMSummary, error)
 }
 
 func (s *Service) ListVMs(ctx context.Context) ([]model.VMSummary, error) {
+	s.logger.Debug("list vms requested")
 	ids, err := s.store.ListVMIDs()
 	if err != nil {
 		return nil, err
@@ -300,6 +330,7 @@ func (s *Service) ListVMs(ctx context.Context) ([]model.VMSummary, error) {
 	slices.SortFunc(result, func(a, b model.VMSummary) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
 	})
+	s.logger.Debug("list vms completed", "count", len(result))
 	return result, nil
 }
 
@@ -333,6 +364,7 @@ func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, extra map[
 
 func (s *Service) triggerHooks(event string, meta model.VMMetadata, vmHooksOverride *model.HooksConfig) {
 	if s.hooks == nil {
+		s.logger.Debug("hook runner unavailable, skipping event", "vmID", meta.ID, "event", event)
 		return
 	}
 
@@ -354,6 +386,7 @@ func (s *Service) triggerHooks(event string, meta model.VMMetadata, vmHooksOverr
 	}
 
 	eventHooks := append(hooksForEvent(globalHooks, event), hooksForEvent(vmHooks, event)...)
+	s.logger.Debug("triggering hooks", "vmID", meta.ID, "event", event, "hookCount", len(eventHooks))
 	s.hooks.RunAsync(event, eventHooks, hookContext(meta))
 }
 
@@ -404,17 +437,22 @@ func hooksForEvent(cfg model.HooksConfig, event string) []model.HookEntry {
 
 func (s *Service) lockVM(id string) (func(), error) {
 	lockPath := s.store.PathsFor(id).LockPath
+	s.logger.Debug("acquiring vm lock", "vmID", id, "lockPath", lockPath)
 	lockHandle, err := lock.Acquire(lockPath)
 	if err != nil {
 		if errors.Is(err, lock.ErrAlreadyLocked) {
+			s.logger.Debug("vm lock already held", "vmID", id, "lockPath", lockPath)
 			return nil, ErrConflict
 		}
 		return nil, err
 	}
+	s.logger.Debug("vm lock acquired", "vmID", id, "lockPath", lockPath)
 	return func() {
 		if releaseErr := lockHandle.Release(); releaseErr != nil {
 			s.logger.Warn("failed to release lock", "lockPath", lockPath, "error", releaseErr)
+			return
 		}
+		s.logger.Debug("vm lock released", "vmID", id, "lockPath", lockPath)
 	}, nil
 }
 

@@ -18,6 +18,8 @@ type Config struct {
 	PortStart      int
 	PortEnd        int
 	GuestCIDR      string
+	LogLevel       string
+	LogFormat      string
 }
 
 func FromEnv() Config {
@@ -33,6 +35,8 @@ func FromEnv() Config {
 		PortStart:      getEnvInt("MGR_PORT_START", 20000),
 		PortEnd:        getEnvInt("MGR_PORT_END", 40000),
 		GuestCIDR:      getEnv("MGR_GUEST_CIDR", "172.30.0.0/24"),
+		LogLevel:       getEnv("MGR_LOG_LEVEL", "info"),
+		LogFormat:      getEnv("MGR_LOG_FORMAT", "json"),
 	}
 }
 

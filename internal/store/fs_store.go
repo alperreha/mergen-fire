@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,7 @@ type FSStore struct {
 	dataRoot   string
 	runRoot    string
 	hooksRoot  string
+	logger     *slog.Logger
 }
 
 func NewFSStore(configRoot, dataRoot, runRoot, hooksRoot string) *FSStore {
@@ -27,10 +29,19 @@ func NewFSStore(configRoot, dataRoot, runRoot, hooksRoot string) *FSStore {
 		dataRoot:   dataRoot,
 		runRoot:    runRoot,
 		hooksRoot:  hooksRoot,
+		logger:     slog.Default(),
 	}
 }
 
+func (s *FSStore) WithLogger(logger *slog.Logger) *FSStore {
+	if logger != nil {
+		s.logger = logger
+	}
+	return s
+}
+
 func (s *FSStore) EnsureBaseDirs() error {
+	s.logger.Debug("ensuring store base directories", "configRoot", s.configRoot, "dataRoot", s.dataRoot, "runRoot", s.runRoot)
 	dirs := []string{s.configRoot, s.dataRoot, s.runRoot}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -44,6 +55,7 @@ func (s *FSStore) SaveVM(id string, cfg model.VMConfig, meta model.VMMetadata, h
 	if err := validateID(id); err != nil {
 		return model.VMPaths{}, err
 	}
+	s.logger.Debug("saving vm artifacts", "vmID", id, "ports", len(meta.Ports), "hasHooks", hasHooks(hooks), "envCount", len(env))
 
 	paths := s.PathsFor(id)
 	meta.Paths = paths
@@ -79,6 +91,7 @@ func (s *FSStore) SaveVM(id string, cfg model.VMConfig, meta model.VMMetadata, h
 		}
 	}
 
+	s.logger.Debug("vm artifacts saved", "vmID", id, "configDir", paths.ConfigDir)
 	return paths, nil
 }
 
@@ -101,6 +114,7 @@ func (s *FSStore) ReadMeta(id string) (model.VMMetadata, error) {
 	if err := validateID(id); err != nil {
 		return model.VMMetadata{}, err
 	}
+	s.logger.Debug("reading vm metadata", "vmID", id)
 	var meta model.VMMetadata
 	if err := readJSON(s.PathsFor(id).MetaPath, &meta); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -115,6 +129,7 @@ func (s *FSStore) ReadVMConfig(id string) (model.VMConfig, error) {
 	if err := validateID(id); err != nil {
 		return model.VMConfig{}, err
 	}
+	s.logger.Debug("reading vm config", "vmID", id)
 	var cfg model.VMConfig
 	if err := readJSON(s.PathsFor(id).VMConfigPath, &cfg); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -129,6 +144,7 @@ func (s *FSStore) ReadHooks(id string) (model.HooksConfig, error) {
 	if err := validateID(id); err != nil {
 		return model.HooksConfig{}, err
 	}
+	s.logger.Debug("reading vm hooks", "vmID", id)
 	var hooks model.HooksConfig
 	if err := readJSON(s.PathsFor(id).HooksPath, &hooks); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -144,6 +160,7 @@ func (s *FSStore) ReadGlobalHooks() (model.HooksConfig, error) {
 	if s.hooksRoot == "" {
 		return merged, nil
 	}
+	s.logger.Debug("reading global hooks", "hooksRoot", s.hooksRoot)
 
 	entries, err := os.ReadDir(s.hooksRoot)
 	if err != nil {
@@ -173,10 +190,18 @@ func (s *FSStore) ReadGlobalHooks() (model.HooksConfig, error) {
 		merged.OnStop = append(merged.OnStop, hooks.OnStop...)
 	}
 
+	s.logger.Debug(
+		"global hooks loaded",
+		"onCreate", len(merged.OnCreate),
+		"onDelete", len(merged.OnDelete),
+		"onStart", len(merged.OnStart),
+		"onStop", len(merged.OnStop),
+	)
 	return merged, nil
 }
 
 func (s *FSStore) ListVMIDs() ([]string, error) {
+	s.logger.Debug("listing vm ids", "configRoot", s.configRoot)
 	entries, err := os.ReadDir(s.configRoot)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -193,6 +218,7 @@ func (s *FSStore) ListVMIDs() ([]string, error) {
 		ids = append(ids, entry.Name())
 	}
 	sort.Strings(ids)
+	s.logger.Debug("listed vm ids", "count", len(ids))
 	return ids, nil
 }
 
@@ -220,6 +246,7 @@ func (s *FSStore) DeleteVM(id string, retainData bool) error {
 	if err := validateID(id); err != nil {
 		return err
 	}
+	s.logger.Debug("deleting vm from store", "vmID", id, "retainData", retainData)
 
 	exists, err := s.Exists(id)
 	if err != nil {
@@ -241,6 +268,7 @@ func (s *FSStore) DeleteVM(id string, retainData bool) error {
 			return err
 		}
 	}
+	s.logger.Debug("vm deleted from store", "vmID", id)
 	return nil
 }
 

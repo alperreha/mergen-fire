@@ -3,6 +3,7 @@ package network
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ type Allocator struct {
 	portStart int
 	portEnd   int
 	guestCIDR string
+	logger    *slog.Logger
 }
 
 func NewAllocator(portStart, portEnd int, guestCIDR string) *Allocator {
@@ -21,10 +23,19 @@ func NewAllocator(portStart, portEnd int, guestCIDR string) *Allocator {
 		portStart: portStart,
 		portEnd:   portEnd,
 		guestCIDR: guestCIDR,
+		logger:    slog.Default(),
 	}
 }
 
+func (a *Allocator) WithLogger(logger *slog.Logger) *Allocator {
+	if logger != nil {
+		a.logger = logger
+	}
+	return a
+}
+
 func (a *Allocator) Allocate(existing []model.VMMetadata, requests []model.PortBindingRequest) (string, []model.PortBinding, error) {
+	a.logger.Debug("allocation started", "existingVMs", len(existing), "requestedPorts", len(requests), "guestCIDR", a.guestCIDR)
 	guestIP, err := a.allocateGuestIP(existing)
 	if err != nil {
 		return "", nil, err
@@ -35,6 +46,7 @@ func (a *Allocator) Allocate(existing []model.VMMetadata, requests []model.PortB
 		return "", nil, err
 	}
 
+	a.logger.Debug("allocation completed", "guestIP", guestIP, "allocatedPorts", len(portBindings))
 	return guestIP, portBindings, nil
 }
 
@@ -86,6 +98,7 @@ func (a *Allocator) allocatePorts(existing []model.VMMetadata, requests []model.
 			Host:     hostPort,
 			Protocol: protocol,
 		})
+		a.logger.Debug("allocated host port", "guestPort", req.Guest, "hostPort", hostPort, "protocol", protocol)
 	}
 
 	sort.Slice(bindings, func(i, j int) bool {

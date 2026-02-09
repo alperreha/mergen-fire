@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 
 type RawConfigurator struct {
 	client *http.Client
+	logger *slog.Logger
 }
 
 func NewRawConfigurator(timeout time.Duration) *RawConfigurator {
@@ -23,10 +25,19 @@ func NewRawConfigurator(timeout time.Duration) *RawConfigurator {
 		client: &http.Client{
 			Timeout: timeout,
 		},
+		logger: slog.Default(),
 	}
 }
 
+func (r *RawConfigurator) WithLogger(logger *slog.Logger) *RawConfigurator {
+	if logger != nil {
+		r.logger = logger
+	}
+	return r
+}
+
 func (r *RawConfigurator) ConfigureAndStart(ctx context.Context, socketPath string, cfg model.VMConfig) error {
+	r.logger.Debug("configuring firecracker via raw socket", "socketPath", socketPath, "drives", len(cfg.Drives), "networkIfaces", len(cfg.NetworkInterfaces))
 	if err := r.doJSON(ctx, socketPath, http.MethodPut, "/boot-source", cfg.BootSource); err != nil {
 		return fmt.Errorf("boot-source: %w", err)
 	}
@@ -51,12 +62,17 @@ func (r *RawConfigurator) ConfigureAndStart(ctx context.Context, socketPath stri
 		}
 	}
 
-	return r.doJSON(ctx, socketPath, http.MethodPut, "/actions", map[string]string{
+	if err := r.doJSON(ctx, socketPath, http.MethodPut, "/actions", map[string]string{
 		"action_type": "InstanceStart",
-	})
+	}); err != nil {
+		return err
+	}
+	r.logger.Debug("firecracker configuration and start action sent", "socketPath", socketPath)
+	return nil
 }
 
 func (r *RawConfigurator) doJSON(ctx context.Context, socketPath, method, endpoint string, payload any) error {
+	r.logger.Debug("sending firecracker api request", "socketPath", socketPath, "method", method, "endpoint", endpoint)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -87,5 +103,6 @@ func (r *RawConfigurator) doJSON(ctx context.Context, socketPath, method, endpoi
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("firecracker api status: %s", response.Status)
 	}
+	r.logger.Debug("firecracker api request successful", "method", method, "endpoint", endpoint, "status", response.Status)
 	return nil
 }
