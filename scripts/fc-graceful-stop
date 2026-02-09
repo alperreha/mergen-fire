@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VM_ID="${1:?vm id is required}"
+VM_DIR="/etc/firecracker/vm.d/${VM_ID}"
+
+if [[ -f "${VM_DIR}/env" ]]; then
+  # shellcheck disable=SC1090
+  source "${VM_DIR}/env"
+fi
+
+# Placeholder for future vsock/guest-agent stop.
+sleep 1
+exit 0

@@ -1,0 +1,21 @@
+[Unit]
+Description=Firecracker microVM %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/firecracker/vm.d/%i/env
+ExecStartPre=/usr/local/bin/fc-net-setup %i
+ExecStart=/usr/local/bin/fc-jailer-start %i
+ExecStartPost=/usr/local/bin/fc-configure-start %i
+ExecStop=/usr/local/bin/fc-graceful-stop %i
+ExecStopPost=/usr/local/bin/fc-net-cleanup %i
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VM_ID="${1:?vm id is required}"
+VM_DIR="/etc/firecracker/vm.d/${VM_ID}"
+RUN_DIR="/run/firecracker/${VM_ID}"
+SOCKET_PATH="${RUN_DIR}/firecracker.socket"
+VM_JSON="${VM_DIR}/vm.json"
+
+if [[ -f "${VM_DIR}/env" ]]; then
+  # shellcheck disable=SC1090
+  source "${VM_DIR}/env"
+fi
+
+if [[ ! -f "${VM_JSON}" ]]; then
+  echo "vm.json not found for ${VM_ID}" >&2
+  exit 1
+fi
+
+# Placeholder readiness wait loop.
+deadline=$((SECONDS + 10))
+while [[ ! -S "${SOCKET_PATH}" ]]; do
+  if [[ ${SECONDS} -ge ${deadline} ]]; then
+    echo "firecracker socket not available, skipping configure for ${VM_ID}" >&2
+    exit 0
+  fi
+  sleep 0.2
+done
+
+# Real implementation should push vm.json over Firecracker API and send InstanceStart.
+exit 0
