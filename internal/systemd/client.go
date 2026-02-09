@@ -13,6 +13,7 @@ import (
 )
 
 var ErrUnavailable = errors.New("systemd unavailable on this host")
+var ErrUnitNotFound = errors.New("systemd unit not found")
 
 type Status struct {
 	Available   bool
@@ -204,6 +205,10 @@ func (c *ExecClient) run(ctx context.Context, args ...string) ([]byte, error) {
 	if strings.Contains(fullErrText, "System has not been booted with systemd") || strings.Contains(fullErrText, "Failed to connect to bus") {
 		c.logger.Warn("systemd appears unavailable", "args", strings.Join(args, " "), "error", fullErrText)
 		return nil, ErrUnavailable
+	}
+	if strings.Contains(fullErrText, "Unit ") && strings.Contains(fullErrText, " not found") {
+		c.logger.Warn("systemd unit not found", "args", strings.Join(args, " "), "error", fullErrText)
+		return nil, fmt.Errorf("%w: %s", ErrUnitNotFound, fullErrText)
 	}
 	if _, ok := err.(*exec.ExitError); ok {
 		c.logger.Debug("systemctl command exited with non-zero status", "args", strings.Join(args, " "), "error", fullErrText)

@@ -160,8 +160,8 @@ func (s *Service) StartVM(ctx context.Context, id string) error {
 	defer release()
 
 	if err := s.systemd.Start(ctx, id); err != nil {
-		if errors.Is(err, systemd.ErrUnavailable) {
-			return ErrUnavailable
+		if errors.Is(err, systemd.ErrUnavailable) || errors.Is(err, systemd.ErrUnitNotFound) {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 		return err
 	}
@@ -194,8 +194,8 @@ func (s *Service) StopVM(ctx context.Context, id string) error {
 	defer release()
 
 	if err := s.systemd.Stop(ctx, id); err != nil {
-		if errors.Is(err, systemd.ErrUnavailable) {
-			return ErrUnavailable
+		if errors.Is(err, systemd.ErrUnavailable) || errors.Is(err, systemd.ErrUnitNotFound) {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 		return err
 	}

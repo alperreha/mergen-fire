@@ -98,6 +98,20 @@ curl -s -X POST http://127.0.0.1:8080/v1/vms \
   }'
 ```
 
+### Systemd template install (required on Linux host)
+
+If you see `Unit fc@<id>.service not found`, install the template and helper scripts:
+
+```bash
+sudo install -D -m 0644 deploy/systemd/fc@.service /etc/systemd/system/fc@.service
+sudo install -m 0755 scripts/fc-net-setup /usr/local/bin/fc-net-setup
+sudo install -m 0755 scripts/fc-jailer-start /usr/local/bin/fc-jailer-start
+sudo install -m 0755 scripts/fc-configure-start /usr/local/bin/fc-configure-start
+sudo install -m 0755 scripts/fc-graceful-stop /usr/local/bin/fc-graceful-stop
+sudo install -m 0755 scripts/fc-net-cleanup /usr/local/bin/fc-net-cleanup
+sudo systemctl daemon-reload
+```
+
 ## API behavior notes
 
 - `start` is idempotent: already running VM still returns success.
