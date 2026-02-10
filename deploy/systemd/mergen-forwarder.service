@@ -9,6 +9,7 @@ User=root
 Environment=FWD_LOG_LEVEL=info
 Environment=FWD_LOG_FORMAT=console
 Environment=FWD_CONFIG_ROOT=/etc/mergen/vm.d
+Environment=FWD_NETNS_ROOT=/run/netns
 Environment=FWD_DOMAIN_PREFIX=
 Environment=FWD_DOMAIN_SUFFIX=localhost
 Environment=FWD_LISTENERS=:8443=8080,:9443=443,:10022=22

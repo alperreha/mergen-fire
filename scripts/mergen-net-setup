@@ -18,4 +18,15 @@ if [[ ! -f "${VM_DIR}/meta.json" ]]; then
   exit 1
 fi
 
+# Create named netns for forwarder setns dial path (/run/netns/<name>).
+if ! command -v ip >/dev/null 2>&1; then
+  echo "ip command not found in PATH" >&2
+  exit 1
+fi
+
+NETNS_NAME="${MGN_NETNS:-mergen-${VM_ID:0:8}}"
+if ! ip netns list | awk '{print $1}' | grep -Fxq "${NETNS_NAME}"; then
+  ip netns add "${NETNS_NAME}"
+fi
+
 exit 0

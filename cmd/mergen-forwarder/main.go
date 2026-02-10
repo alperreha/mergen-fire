@@ -21,13 +21,14 @@ func main() {
 	logger.Info(
 		"starting forwarder",
 		"configRoot", cfg.ConfigRoot,
+		"netnsRoot", cfg.NetNSRoot,
 		"listeners", len(cfg.Listeners),
 		"domainPrefix", cfg.DomainPrefix,
 		"domainSuffix", cfg.DomainSuffix,
 	)
 
 	resolver := forwarder.NewResolver(cfg.ConfigRoot, cfg.DomainPrefix, cfg.DomainSuffix, cfg.ResolverCacheTTL, logger.With("component", "resolver"))
-	dialer := forwarder.NewNetNSDialer(cfg.DialTimeout)
+	dialer := forwarder.NewNetNSDialer(cfg.DialTimeout, cfg.NetNSRoot)
 
 	server, err := forwarder.NewServer(cfg, resolver, dialer, logger.With("component", "server"))
 	if err != nil {

@@ -13,7 +13,7 @@ type NetNSDialer struct {
 	timeout time.Duration
 }
 
-func NewNetNSDialer(timeout time.Duration) NetNSDialer {
+func NewNetNSDialer(timeout time.Duration, _ string) NetNSDialer {
 	return NetNSDialer{timeout: timeout}
 }
 

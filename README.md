@@ -225,6 +225,7 @@ FWD_LOG_FORMAT=json go run ./cmd/mergen-forwarder
 Environment variables:
 
 - `FWD_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
+- `FWD_NETNS_ROOT` (default `/run/netns`)
 - `FWD_TLS_CERT_FILE` (default `/etc/mergen/certs/wildcard.localhost.crt`)
 - `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
 - `FWD_DOMAIN_PREFIX` (default empty)
