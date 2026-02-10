@@ -137,6 +137,27 @@ CERT_DOMAIN_SUFFIX=example.com \
 ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
 ```
 
+### Build rootfs from Docker image
+
+Generate a Firecracker-friendly rootfs bundle (`rootfs/`, `rootfs.tar`, `rootfs.ext4`) from Docker Hub image:
+
+```bash
+./scripts/build-rootfs-from-dockerhub.sh --image nginx:alpine
+```
+
+Custom output path/name/size:
+
+```bash
+./scripts/build-rootfs-from-dockerhub.sh \
+  --image redis:7 \
+  --output-dir /var/lib/mergen/base/redis \
+  --name redis-rootfs \
+  --size-mib 1024
+```
+
+Script also writes image startup metadata and an `/init` wrapper that executes image `Entrypoint + Cmd`.
+Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `init=/init`.
+
 ### Run TLS SNI forwarder
 
 ```bash
