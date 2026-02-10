@@ -9,8 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type NetNSDialer struct {
@@ -42,11 +43,11 @@ func (d NetNSDialer) DialContext(ctx context.Context, network, address, netns st
 	}
 	defer target.Close()
 
-	if err := setns(target.Fd(), syscall.CLONE_NEWNET); err != nil {
+	if err := setns(target.Fd(), unix.CLONE_NEWNET); err != nil {
 		return nil, fmt.Errorf("setns target %s failed: %w", targetPath, err)
 	}
 	defer func() {
-		_ = setns(origin.Fd(), syscall.CLONE_NEWNET)
+		_ = setns(origin.Fd(), unix.CLONE_NEWNET)
 	}()
 
 	dialer := &net.Dialer{
@@ -56,9 +57,5 @@ func (d NetNSDialer) DialContext(ctx context.Context, network, address, netns st
 }
 
 func setns(fd uintptr, nstype int) error {
-	_, _, errno := syscall.RawSyscall(syscall.SYS_SETNS, fd, uintptr(nstype), 0)
-	if errno != 0 {
-		return errno
-	}
-	return nil
+	return unix.Setns(int(fd), nstype)
 }
