@@ -17,7 +17,7 @@ to running Firecracker guest services through VM network namespace.
 1. Client connects to forwarder TLS listener.
 2. Forwarder terminates TLS with wildcard certificate (`*.{prefix.}suffix`, configured at runtime).
 3. Forwarder reads SNI (`ServerName`) from TLS handshake.
-4. SNI label is resolved to VM metadata from `/etc/firecracker/vm.d/<id>/meta.json`.
+4. SNI label is resolved to VM metadata from `/etc/mergen/vm.d/<id>/meta.json`.
 5. Forwarder enters VM netns (`/var/run/netns/<name>`) for dial operation.
 6. Forwarder dials guest IP + target guest port.
 7. Bidirectional TCP stream copy starts.

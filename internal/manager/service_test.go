@@ -48,7 +48,7 @@ func (f *fakeSystemd) IsActive(_ context.Context, id string) (bool, error) {
 func (f *fakeSystemd) Status(_ context.Context, id string) (systemd.Status, error) {
 	return systemd.Status{
 		Available:   true,
-		Unit:        "fc@" + id + ".service",
+		Unit:        "mergen@" + id + ".service",
 		Active:      f.active[id],
 		ActiveState: map[bool]string{true: "active", false: "inactive"}[f.active[id]],
 		SubState:    "running",
@@ -60,10 +60,10 @@ func TestServiceLifecycle_IdempotentStartStop(t *testing.T) {
 	base := t.TempDir()
 
 	fsStore := store.NewFSStore(
-		filepath.Join(base, "etc", "firecracker", "vm.d"),
-		filepath.Join(base, "var", "lib", "firecracker"),
-		filepath.Join(base, "run", "firecracker"),
-		filepath.Join(base, "etc", "firecracker", "hooks.d"),
+		filepath.Join(base, "etc", "mergen", "vm.d"),
+		filepath.Join(base, "var", "lib", "mergen"),
+		filepath.Join(base, "run", "mergen"),
+		filepath.Join(base, "etc", "mergen", "hooks.d"),
 	)
 	if err := fsStore.EnsureBaseDirs(); err != nil {
 		t.Fatalf("ensure dirs: %v", err)

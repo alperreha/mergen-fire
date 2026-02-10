@@ -18,7 +18,7 @@ func TestResolverResolveByTagAndUUID(t *testing.T) {
 	meta := `{
   "id":"084604f6-0766-4b7d-9d23-0b7a011d6eaa",
   "guestIP":"172.30.0.5",
-  "netns":"fc-084604f6-0",
+  "netns":"mergen-084604f6",
   "tapName":"tap-084604f6",
   "ports":[{"guest":8080,"host":20002,"protocol":"tcp"}],
   "tags":{"app":"app1","host":"app1"}
@@ -57,7 +57,7 @@ func TestResolverResolveWithPrefixAndSuffix(t *testing.T) {
 	meta := `{
   "id":"11111111-2222-3333-4444-555555555555",
   "guestIP":"10.0.0.3",
-  "netns":"fc-11111111-2",
+  "netns":"mergen-11111111",
   "tags":{"app":"edgeapp"}
 }`
 	if err := os.WriteFile(filepath.Join(vmDir, "meta.json"), []byte(meta), 0o644); err != nil {

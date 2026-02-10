@@ -12,10 +12,10 @@ import (
 func TestSaveReadDeleteVM(t *testing.T) {
 	base := t.TempDir()
 	s := NewFSStore(
-		filepath.Join(base, "etc", "firecracker", "vm.d"),
-		filepath.Join(base, "var", "lib", "firecracker"),
-		filepath.Join(base, "run", "firecracker"),
-		filepath.Join(base, "etc", "firecracker", "hooks.d"),
+		filepath.Join(base, "etc", "mergen", "vm.d"),
+		filepath.Join(base, "var", "lib", "mergen"),
+		filepath.Join(base, "run", "mergen"),
+		filepath.Join(base, "etc", "mergen", "hooks.d"),
 	)
 	if err := s.EnsureBaseDirs(); err != nil {
 		t.Fatalf("ensure base dirs: %v", err)
@@ -29,7 +29,7 @@ func TestSaveReadDeleteVM(t *testing.T) {
 		Kernel:    "/tmp/vmlinux",
 		GuestIP:   "172.30.0.2",
 		TapName:   "tap-testvm1",
-		NetNS:     "fc-testvm1",
+		NetNS:     "mergen-testvm1",
 		Ports: []model.PortBinding{
 			{Guest: 8080, Host: 20000, Protocol: "tcp"},
 		},

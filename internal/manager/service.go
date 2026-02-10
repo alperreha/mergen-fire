@@ -336,22 +336,22 @@ func (s *Service) ListVMs(ctx context.Context) ([]model.VMSummary, error) {
 
 func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, extra map[string]string) map[string]string {
 	env := map[string]string{
-		"FC_VM_ID":       meta.ID,
-		"FC_CONFIG_DIR":  paths.ConfigDir,
-		"FC_VM_JSON":     paths.VMConfigPath,
-		"FC_META_JSON":   paths.MetaPath,
-		"FC_HOOKS_JSON":  paths.HooksPath,
-		"FC_RUN_DIR":     paths.RunDir,
-		"FC_SOCKET_PATH": paths.SocketPath,
-		"FC_TAP_NAME":    meta.TapName,
-		"FC_NETNS":       meta.NetNS,
-		"FC_GUEST_IP":    meta.GuestIP,
-		"FC_DATA_DIR":    paths.DataDir,
-		"FC_LOG_DIR":     paths.LogsDir,
+		"MGN_VM_ID":       meta.ID,
+		"MGN_CONFIG_DIR":  paths.ConfigDir,
+		"MGN_VM_JSON":     paths.VMConfigPath,
+		"MGN_META_JSON":   paths.MetaPath,
+		"MGN_HOOKS_JSON":  paths.HooksPath,
+		"MGN_RUN_DIR":     paths.RunDir,
+		"MGN_SOCKET_PATH": paths.SocketPath,
+		"MGN_TAP_NAME":    meta.TapName,
+		"MGN_NETNS":       meta.NetNS,
+		"MGN_GUEST_IP":    meta.GuestIP,
+		"MGN_DATA_DIR":    paths.DataDir,
+		"MGN_LOG_DIR":     paths.LogsDir,
 	}
 
 	for _, p := range meta.Ports {
-		env[fmt.Sprintf("FC_PUBLISH_%d", p.Guest)] = fmt.Sprintf("%d/%s", p.Host, p.Protocol)
+		env[fmt.Sprintf("MGN_PUBLISH_%d", p.Guest)] = fmt.Sprintf("%d/%s", p.Host, p.Protocol)
 	}
 	for key, value := range extra {
 		if strings.TrimSpace(key) == "" {

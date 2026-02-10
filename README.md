@@ -32,7 +32,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
   - `meta.json` (manager metadata)
   - `hooks.json` (optional VM hooks)
   - `env` (systemd env file)
-- `systemd` service model: `fc@<uuid>.service`
+- `systemd` service model: `mergen@<uuid>.service`
 - Basic port publish + sequential IP allocation
 - Per-VM lock file to prevent lifecycle race conditions
 - Structured logging with configurable level/format
@@ -63,9 +63,9 @@ Forwarder design details: `docs/forwarder-design.md`
 - `internal/firecracker`: VM config rendering and socket probe
 - `internal/network`: host-port and guest-IP allocation
 - `internal/hooks`: hook runner
-- `deploy/systemd/fc@.service`: systemd unit template
+- `deploy/systemd/mergen@.service`: systemd unit template
 - `deploy/systemd/mergen-forwarder.service`: forwarder systemd unit
-- `scripts/fc-*`: host helper script stubs
+- `scripts/mergen-*`: host helper script stubs
 - `scripts/gen-wildcard-cert.sh`: self-signed wildcard TLS cert generator
 
 ## Requirements
@@ -99,8 +99,8 @@ curl -s http://127.0.0.1:8080/healthz
 curl -s -X POST http://127.0.0.1:8080/v1/vms \
   -H 'content-type: application/json' \
   -d '{
-    "rootfs": "/var/lib/firecracker/base/rootfs.ext4",
-    "kernel": "/var/lib/firecracker/base/vmlinux",
+    "rootfs": "/var/lib/mergen/base/rootfs.ext4",
+    "kernel": "/var/lib/mergen/base/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
     "ports": [{"guest": 8080, "host": 0}],
@@ -111,15 +111,15 @@ curl -s -X POST http://127.0.0.1:8080/v1/vms \
 
 ### Systemd template install (required on Linux host)
 
-If you see `Unit fc@<id>.service not found`, install the template and helper scripts:
+If you see `Unit mergen@<id>.service not found`, install the template and helper scripts:
 
 ```bash
-sudo install -D -m 0644 deploy/systemd/fc@.service /etc/systemd/system/fc@.service
-sudo install -m 0755 scripts/fc-net-setup /usr/local/bin/fc-net-setup
-sudo install -m 0755 scripts/fc-jailer-start /usr/local/bin/fc-jailer-start
-sudo install -m 0755 scripts/fc-configure-start /usr/local/bin/fc-configure-start
-sudo install -m 0755 scripts/fc-graceful-stop /usr/local/bin/fc-graceful-stop
-sudo install -m 0755 scripts/fc-net-cleanup /usr/local/bin/fc-net-cleanup
+sudo install -D -m 0644 deploy/systemd/mergen@.service /etc/systemd/system/mergen@.service
+sudo install -m 0755 scripts/mergen-net-setup /usr/local/bin/mergen-net-setup
+sudo install -m 0755 scripts/mergen-jailer-start /usr/local/bin/mergen-jailer-start
+sudo install -m 0755 scripts/mergen-configure-start /usr/local/bin/mergen-configure-start
+sudo install -m 0755 scripts/mergen-graceful-stop /usr/local/bin/mergen-graceful-stop
+sudo install -m 0755 scripts/mergen-net-cleanup /usr/local/bin/mergen-net-cleanup
 sudo systemctl daemon-reload
 ```
 
@@ -182,13 +182,14 @@ curl -k --resolve app1.vm.example.com:8443:127.0.0.1 https://app1.vm.example.com
 Environment variables:
 
 - `MGR_HTTP_ADDR` (default `:8080`)
-- `MGR_CONFIG_ROOT` (default `/etc/firecracker/vm.d`)
-- `MGR_DATA_ROOT` (default `/var/lib/firecracker`)
-- `MGR_RUN_ROOT` (default `/run/firecracker`)
-- `MGR_GLOBAL_HOOKS_DIR` (default `/etc/firecracker/hooks.d`)
-- `MGR_UNIT_PREFIX` (default `fc`)
+- `MGR_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
+- `MGR_DATA_ROOT` (default `/var/lib/mergen`)
+- `MGR_RUN_ROOT` (default `/run/mergen`)
+- `MGR_GLOBAL_HOOKS_DIR` (default `/etc/mergen/hooks.d`)
+- `MGR_UNIT_PREFIX` (default `mergen`)
 - `MGR_SYSTEMCTL_PATH` (default `systemctl`)
 - `MGR_COMMAND_TIMEOUT_SECONDS` (default `10`)
+- `MGR_SHUTDOWN_TIMEOUT_SECONDS` (default `15`)
 - `MGR_PORT_START` (default `20000`)
 - `MGR_PORT_END` (default `40000`)
 - `MGR_GUEST_CIDR` (default `172.30.0.0/24`)
@@ -223,7 +224,7 @@ FWD_LOG_FORMAT=json go run ./cmd/mergen-forwarder
 
 Environment variables:
 
-- `FWD_CONFIG_ROOT` (default `/etc/firecracker/vm.d`)
+- `FWD_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
 - `FWD_TLS_CERT_FILE` (default `/etc/mergen/certs/wildcard.localhost.crt`)
 - `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
 - `FWD_DOMAIN_PREFIX` (default empty)
@@ -232,6 +233,7 @@ Environment variables:
 - `FWD_ALLOWED_GUEST_PORTS` (default `22,8080,443`)
 - `FWD_DIAL_TIMEOUT_SECONDS` (default `5`)
 - `FWD_RESOLVER_CACHE_TTL_SECONDS` (default `5`)
+- `FWD_SHUTDOWN_TIMEOUT_SECONDS` (default `15`)
 - `FWD_LOG_LEVEL` (default `debug`)
 - `FWD_LOG_FORMAT` (default `console`)
 
@@ -242,13 +244,13 @@ SNI matching:
 
 ## Systemd template and scripts
 
-- Unit template: `deploy/systemd/fc@.service`
+- Unit template: `deploy/systemd/mergen@.service`
 - Helper scripts:
-  - `scripts/fc-net-setup`
-  - `scripts/fc-jailer-start`
-  - `scripts/fc-configure-start`
-  - `scripts/fc-graceful-stop`
-  - `scripts/fc-net-cleanup`
+  - `scripts/mergen-net-setup`
+  - `scripts/mergen-jailer-start`
+  - `scripts/mergen-configure-start`
+  - `scripts/mergen-graceful-stop`
+  - `scripts/mergen-net-cleanup`
 
 Current scripts are deterministic stubs to define boundaries. Replace with host-specific networking and jailer commands for production.
 

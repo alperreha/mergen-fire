@@ -2,7 +2,7 @@
 set -euo pipefail
 
 VM_ID="${1:?vm id is required}"
-VM_DIR="/etc/firecracker/vm.d/${VM_ID}"
+VM_DIR="/etc/mergen/vm.d/${VM_ID}"
 
 # Minimal deterministic placeholder:
 # - Read env file if present

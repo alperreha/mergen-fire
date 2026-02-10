@@ -8,8 +8,8 @@ import (
 
 func TestRenderVMConfig_Defaults(t *testing.T) {
 	req := model.CreateVMRequest{
-		RootFS: "/var/lib/firecracker/vm1/rootfs.ext4",
-		Kernel: "/var/lib/firecracker/vm1/vmlinux",
+		RootFS: "/var/lib/mergen/vm1/rootfs.ext4",
+		Kernel: "/var/lib/mergen/vm1/vmlinux",
 		VCPU:   1,
 		MemMiB: 512,
 	}

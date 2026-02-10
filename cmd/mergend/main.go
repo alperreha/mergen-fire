@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -48,9 +54,52 @@ func main() {
 	})
 	api.Register(e, service, logger.With("component", "api"))
 
-	logger.Info("daemon started", "addr", cfg.HTTPAddr)
-	if err := e.Start(cfg.HTTPAddr); err != nil {
-		logger.Error("http server stopped", "error", err)
+	server := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           e,
+		ReadHeaderTimeout: cfg.CommandTimeout,
+	}
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		logger.Info("daemon started", "addr", cfg.HTTPAddr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrCh <- err
+			return
+		}
+		serverErrCh <- nil
+	}()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			logger.Error("http server stopped with error", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("daemon stopped")
+		return
+	case <-ctx.Done():
+		logger.Info("shutdown signal received")
+	}
+
+	shutdownTimeout := cfg.ShutdownTimeout
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 15 * time.Second
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("daemon graceful shutdown failed", "error", err)
 		os.Exit(1)
 	}
+
+	if err := <-serverErrCh; err != nil {
+		logger.Error("daemon stopped with error", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("daemon stopped gracefully")
 }

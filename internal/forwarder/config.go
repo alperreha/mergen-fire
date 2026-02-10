@@ -24,6 +24,7 @@ type Config struct {
 	Listeners         []Listener
 	DialTimeout       time.Duration
 	ResolverCacheTTL  time.Duration
+	ShutdownTimeout   time.Duration
 	AllowedGuestPorts map[int]struct{}
 }
 
@@ -47,7 +48,7 @@ func FromEnv() (Config, error) {
 	defaultCertBase := domainBase(domainPrefix, domainSuffix)
 
 	cfg := Config{
-		ConfigRoot:        getEnv("FWD_CONFIG_ROOT", "/etc/firecracker/vm.d"),
+		ConfigRoot:        getEnv("FWD_CONFIG_ROOT", "/etc/mergen/vm.d"),
 		CertFile:          getEnv("FWD_TLS_CERT_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".crt"),
 		KeyFile:           getEnv("FWD_TLS_KEY_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".key"),
 		DomainPrefix:      domainPrefix,
@@ -57,6 +58,7 @@ func FromEnv() (Config, error) {
 		Listeners:         listeners,
 		DialTimeout:       time.Duration(getEnvInt("FWD_DIAL_TIMEOUT_SECONDS", 5)) * time.Second,
 		ResolverCacheTTL:  time.Duration(getEnvInt("FWD_RESOLVER_CACHE_TTL_SECONDS", 5)) * time.Second,
+		ShutdownTimeout:   time.Duration(getEnvInt("FWD_SHUTDOWN_TIMEOUT_SECONDS", 15)) * time.Second,
 		AllowedGuestPorts: allowedPorts,
 	}
 

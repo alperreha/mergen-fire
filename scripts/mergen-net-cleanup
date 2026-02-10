@@ -2,7 +2,7 @@
 set -euo pipefail
 
 VM_ID="${1:?vm id is required}"
-VM_DIR="/etc/firecracker/vm.d/${VM_ID}"
+VM_DIR="/etc/mergen/vm.d/${VM_ID}"
 
 if [[ -f "${VM_DIR}/env" ]]; then
   # shellcheck disable=SC1090

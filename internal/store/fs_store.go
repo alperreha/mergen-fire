@@ -284,7 +284,7 @@ func (s *FSStore) PathsFor(id string) model.VMPaths {
 		HooksPath:    filepath.Join(configDir, "hooks.json"),
 		EnvPath:      filepath.Join(configDir, "env"),
 		RunDir:       runDir,
-		SocketPath:   filepath.Join(runDir, "firecracker.socket"),
+		SocketPath:   filepath.Join(runDir, "mergen.socket"),
 		LockPath:     filepath.Join(s.runRoot, id+".lock"),
 		DataDir:      dataDir,
 		LogsDir:      filepath.Join(dataDir, "logs"),

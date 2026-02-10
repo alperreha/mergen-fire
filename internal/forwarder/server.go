@@ -24,6 +24,9 @@ type Server struct {
 	dialer   Dialer
 	logger   *slog.Logger
 	cert     tls.Certificate
+	connMu   sync.Mutex
+	connWG   sync.WaitGroup
+	conns    map[net.Conn]struct{}
 }
 
 func NewServer(config Config, resolver *Resolver, dialer Dialer, logger *slog.Logger) (*Server, error) {
@@ -48,6 +51,7 @@ func NewServer(config Config, resolver *Resolver, dialer Dialer, logger *slog.Lo
 		dialer:   dialer,
 		logger:   logger,
 		cert:     cert,
+		conns:    map[net.Conn]struct{}{},
 	}, nil
 }
 
@@ -69,7 +73,8 @@ func (s *Server) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		wg.Wait()
-		return ctx.Err()
+		s.waitForConnections()
+		return nil
 	case err := <-errCh:
 		return err
 	}
@@ -109,11 +114,15 @@ func (s *Server) runListener(ctx context.Context, listenerCfg Listener) error {
 			return fmt.Errorf("accept failed on %s: %w", listenerCfg.Addr, err)
 		}
 
+		s.trackConn(conn)
+		s.connWG.Add(1)
 		go s.handleConn(conn, listenerCfg)
 	}
 }
 
 func (s *Server) handleConn(clientConn net.Conn, listenerCfg Listener) {
+	defer s.connWG.Done()
+	defer s.untrackConn(clientConn)
 	defer clientConn.Close()
 
 	tlsConn, ok := clientConn.(*tls.Conn)
@@ -170,6 +179,64 @@ func (s *Server) handleConn(clientConn net.Conn, listenerCfg Listener) {
 	)
 
 	proxyStreams(tlsConn, backendConn)
+}
+
+func (s *Server) waitForConnections() {
+	done := make(chan struct{})
+	go func() {
+		s.connWG.Wait()
+		close(done)
+	}()
+
+	timeout := s.config.ShutdownTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+
+	select {
+	case <-done:
+		s.logger.Info("forwarder graceful shutdown completed")
+	case <-time.After(timeout):
+		active := s.activeConnectionCount()
+		s.logger.Warn(
+			"forwarder shutdown timeout reached, forcing connection close",
+			"activeConnections", active,
+			"timeout", timeout.String(),
+		)
+		s.closeAllConnections()
+		<-done
+	}
+}
+
+func (s *Server) trackConn(conn net.Conn) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	s.conns[conn] = struct{}{}
+}
+
+func (s *Server) untrackConn(conn net.Conn) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	delete(s.conns, conn)
+}
+
+func (s *Server) activeConnectionCount() int {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return len(s.conns)
+}
+
+func (s *Server) closeAllConnections() {
+	s.connMu.Lock()
+	snapshot := make([]net.Conn, 0, len(s.conns))
+	for conn := range s.conns {
+		snapshot = append(snapshot, conn)
+	}
+	s.connMu.Unlock()
+
+	for _, conn := range snapshot {
+		_ = conn.Close()
+	}
 }
 
 func proxyStreams(client net.Conn, backend net.Conn) {

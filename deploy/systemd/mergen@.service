@@ -1,0 +1,21 @@
+[Unit]
+Description=Mergen microVM %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/mergen/vm.d/%i/env
+ExecStartPre=/usr/local/bin/mergen-net-setup %i
+ExecStart=/usr/local/bin/mergen-jailer-start %i
+ExecStartPost=/usr/local/bin/mergen-configure-start %i
+ExecStop=/usr/local/bin/mergen-graceful-stop %i
+ExecStopPost=/usr/local/bin/mergen-net-cleanup %i
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 VM_ID="${1:?vm id is required}"
-VM_DIR="/etc/firecracker/vm.d/${VM_ID}"
-RUN_DIR="/run/firecracker/${VM_ID}"
+VM_DIR="/etc/mergen/vm.d/${VM_ID}"
+RUN_DIR="/run/mergen/${VM_ID}"
 
 if [[ -f "${VM_DIR}/env" ]]; then
   # shellcheck disable=SC1090
@@ -14,9 +14,9 @@ mkdir -p "${RUN_DIR}"
 
 # Placeholder start command:
 # In production this should invoke jailer and firecracker binary.
-if [[ -n "${FC_SOCKET_PATH:-}" ]]; then
-  : > "${FC_SOCKET_PATH}.placeholder"
+if [[ -n "${MGN_SOCKET_PATH:-}" ]]; then
+  : > "${MGN_SOCKET_PATH}.placeholder"
 fi
 
-echo "firecracker placeholder started for ${VM_ID}"
+echo "mergen placeholder started for ${VM_ID}"
 sleep infinity

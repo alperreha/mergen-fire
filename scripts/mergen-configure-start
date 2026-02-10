@@ -2,9 +2,9 @@
 set -euo pipefail
 
 VM_ID="${1:?vm id is required}"
-VM_DIR="/etc/firecracker/vm.d/${VM_ID}"
-RUN_DIR="/run/firecracker/${VM_ID}"
-SOCKET_PATH="${RUN_DIR}/firecracker.socket"
+VM_DIR="/etc/mergen/vm.d/${VM_ID}"
+RUN_DIR="/run/mergen/${VM_ID}"
+SOCKET_PATH="${RUN_DIR}/mergen.socket"
 VM_JSON="${VM_DIR}/vm.json"
 
 if [[ -f "${VM_DIR}/env" ]]; then
@@ -21,7 +21,7 @@ fi
 deadline=$((SECONDS + 10))
 while [[ ! -S "${SOCKET_PATH}" ]]; do
   if [[ ${SECONDS} -ge ${deadline} ]]; then
-    echo "firecracker socket not available, skipping configure for ${VM_ID}" >&2
+    echo "mergen socket not available, skipping configure for ${VM_ID}" >&2
     exit 0
   fi
   sleep 0.2

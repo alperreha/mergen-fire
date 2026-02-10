@@ -168,10 +168,10 @@ func TapName(id string) string {
 
 func NetNSName(id string) string {
 	shortID := id
-	if len(shortID) > 10 {
-		shortID = shortID[:10]
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
 	}
-	return "fc-" + shortID
+	return "mergen-" + shortID
 }
 
 func GuestMAC(id string) string {
