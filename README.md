@@ -135,13 +135,20 @@ Environment variables:
 - `MGR_PORT_END` (default `40000`)
 - `MGR_GUEST_CIDR` (default `172.30.0.0/24`)
 - `MGR_LOG_LEVEL` (default `info`, values: `debug|info|warn|error`)
-- `MGR_LOG_FORMAT` (default `json`, values: `json|text`)
+- `MGR_LOG_FORMAT` (default `console`, values: `console|json|text`)
 
 Enable verbose debugging:
 
 ```bash
-MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=text go run ./cmd/manager
+MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=console go run ./cmd/manager
 ```
+
+`console` format prints colored output in this order: `[LEVEL] TIMESTAMP MESSAGE key=value...`
+
+- `INFO` is blue
+- `WARN` is yellow
+- `ERROR` is red
+- `DEBUG` is cyan
 
 ## Systemd template and scripts
 
