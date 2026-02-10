@@ -4,9 +4,12 @@
 [![Firecracker](https://img.shields.io/badge/firecracker-microVM-orange)](https://firecracker-microvm.github.io/)
 [![Platform](https://img.shields.io/badge/platform-linux%20host-lightgrey)](#requirements)
 
-Minimal **Firecracker VM manager** in Go.
+Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
-`mergen-fire` provides a small control-plane to manage microVM lifecycle on a single host, with `systemd` as process supervisor and file-based state.
+`mergen-fire` provides:
+
+- `mergend`: VM lifecycle manager (control-plane)
+- `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 
 ## Why this project
 
@@ -41,22 +44,29 @@ Minimal **Firecracker VM manager** in Go.
 
 ## Architecture
 
-- **Control plane:** Go HTTP API server (`cmd/manager`)
+- **Control plane:** Go HTTP API server (`cmd/mergend`)
+- **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
 
+Forwarder design details: `docs/forwarder-design.md`
+
 ## Repository layout
 
-- `cmd/manager`: API entrypoint
+- `cmd/mergend`: manager daemon API entrypoint
+- `cmd/mergen-forwarder`: TLS SNI forwarder
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
+- `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
 - `internal/store`: filesystem persistence
 - `internal/systemd`: `systemctl` wrapper
 - `internal/firecracker`: VM config rendering and socket probe
 - `internal/network`: host-port and guest-IP allocation
 - `internal/hooks`: hook runner
 - `deploy/systemd/fc@.service`: systemd unit template
+- `deploy/systemd/mergen-forwarder.service`: forwarder systemd unit
 - `scripts/fc-*`: host helper script stubs
+- `scripts/gen-wildcard-cert.sh`: self-signed wildcard TLS cert generator
 
 ## Requirements
 
@@ -71,10 +81,10 @@ Minimal **Firecracker VM manager** in Go.
 
 ## Quick start
 
-1. Run manager:
+1. Run manager daemon:
 
 ```bash
-go run ./cmd/manager
+go run ./cmd/mergend
 ```
 
 2. Health check:
@@ -94,6 +104,7 @@ curl -s -X POST http://127.0.0.1:8080/v1/vms \
     "vcpu": 1,
     "memMiB": 512,
     "ports": [{"guest": 8080, "host": 0}],
+    "tags": {"app": "app1"},
     "autoStart": false
   }'
 ```
@@ -110,6 +121,53 @@ sudo install -m 0755 scripts/fc-configure-start /usr/local/bin/fc-configure-star
 sudo install -m 0755 scripts/fc-graceful-stop /usr/local/bin/fc-graceful-stop
 sudo install -m 0755 scripts/fc-net-cleanup /usr/local/bin/fc-net-cleanup
 sudo systemctl daemon-reload
+```
+
+### Generate wildcard certificate (prefix + suffix aware)
+
+```bash
+./scripts/gen-wildcard-cert.sh ./certs
+```
+
+Example for custom domain pattern (`*.vm.example.com`):
+
+```bash
+CERT_DOMAIN_PREFIX=vm \
+CERT_DOMAIN_SUFFIX=example.com \
+./scripts/gen-wildcard-cert.sh /etc/mergen/certs
+```
+
+### Run TLS SNI forwarder
+
+```bash
+FWD_DOMAIN_PREFIX= \
+FWD_DOMAIN_SUFFIX=localhost \
+FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt \
+FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key \
+FWD_LOG_LEVEL=debug \
+go run ./cmd/mergen-forwarder
+```
+
+Default forwarder listeners:
+
+- `:8443 -> guest:8080`
+- `:9443 -> guest:443`
+- `:10022 -> guest:22`
+
+All listeners are TLS listeners (SNI is required). `:10022` is for TLS-wrapped traffic to guest `22`, not raw SSH protocol passthrough.
+
+Example request:
+
+```bash
+curl -k --resolve app1.localhost:8443:127.0.0.1 https://app1.localhost:8443/
+curl -k --resolve 084604f6.localhost:8443:127.0.0.1 https://084604f6.localhost:8443/
+```
+
+With custom prefix/suffix:
+
+```bash
+# FWD_DOMAIN_PREFIX=vm, FWD_DOMAIN_SUFFIX=example.com
+curl -k --resolve app1.vm.example.com:8443:127.0.0.1 https://app1.vm.example.com:8443/
 ```
 
 ## API behavior notes
@@ -140,7 +198,7 @@ Environment variables:
 Enable verbose debugging:
 
 ```bash
-MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=console go run ./cmd/manager
+MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=console go run ./cmd/mergend
 ```
 
 `console` format prints colored output in this order: `[LEVEL] TIMESTAMP MESSAGE key=value...`
@@ -149,6 +207,38 @@ MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=console go run ./cmd/manager
 - `WARN` is yellow
 - `ERROR` is red
 - `DEBUG` is cyan
+
+Forwarder logging uses:
+
+- `FWD_LOG_LEVEL` (default `debug`, values: `debug|info|warn|error`)
+- `FWD_LOG_FORMAT` (default `console`, values: `console|json|text`)
+
+To emit JSON for Elastic:
+
+```bash
+FWD_LOG_FORMAT=json go run ./cmd/mergen-forwarder
+```
+
+## Forwarder Configuration
+
+Environment variables:
+
+- `FWD_CONFIG_ROOT` (default `/etc/firecracker/vm.d`)
+- `FWD_TLS_CERT_FILE` (default `/etc/mergen/certs/wildcard.localhost.crt`)
+- `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
+- `FWD_DOMAIN_PREFIX` (default empty)
+- `FWD_DOMAIN_SUFFIX` (default `localhost`)
+- `FWD_LISTENERS` (default `:8443=8080,:9443=443,:10022=22`)
+- `FWD_ALLOWED_GUEST_PORTS` (default `22,8080,443`)
+- `FWD_DIAL_TIMEOUT_SECONDS` (default `5`)
+- `FWD_RESOLVER_CACHE_TTL_SECONDS` (default `5`)
+- `FWD_LOG_LEVEL` (default `debug`)
+- `FWD_LOG_FORMAT` (default `console`)
+
+SNI matching:
+
+- prefix empty: `<label>.<suffix>`
+- prefix set: `<label>.<prefix>.<suffix>`
 
 ## Systemd template and scripts
 

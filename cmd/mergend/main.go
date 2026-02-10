@@ -18,8 +18,8 @@ import (
 
 func main() {
 	cfg := config.FromEnv()
-	logger := logging.New(cfg.LogLevel, cfg.LogFormat).With("component", "manager-main")
-	logger.Info("bootstrapping manager", "pid", os.Getpid(), "logLevel", cfg.LogLevel, "logFormat", cfg.LogFormat)
+	logger := logging.New(cfg.LogLevel, cfg.LogFormat).With("component", "mergend")
+	logger.Info("bootstrapping daemon", "pid", os.Getpid(), "logLevel", cfg.LogLevel, "logFormat", cfg.LogFormat)
 
 	fsStore := store.
 		NewFSStore(cfg.ConfigRoot, cfg.DataRoot, cfg.RunRoot, cfg.GlobalHooksDir).
@@ -48,7 +48,7 @@ func main() {
 	})
 	api.Register(e, service, logger.With("component", "api"))
 
-	logger.Info("manager started", "addr", cfg.HTTPAddr)
+	logger.Info("daemon started", "addr", cfg.HTTPAddr)
 	if err := e.Start(cfg.HTTPAddr); err != nil {
 		logger.Error("http server stopped", "error", err)
 		os.Exit(1)
