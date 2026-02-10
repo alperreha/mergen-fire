@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ type Resolver struct {
 	mu         sync.RWMutex
 	cacheUntil time.Time
 	cache      map[string]model.VMMetadata
+	ordered    []model.VMMetadata
 }
 
 func NewResolver(configRoot, domainPrefix, domainSuffix string, cacheTTL time.Duration, logger *slog.Logger) *Resolver {
@@ -55,6 +57,7 @@ func NewResolver(configRoot, domainPrefix, domainSuffix string, cacheTTL time.Du
 		cacheTTL:     cacheTTL,
 		logger:       logger,
 		cache:        map[string]model.VMMetadata{},
+		ordered:      nil,
 	}
 }
 
@@ -75,6 +78,19 @@ func (r *Resolver) Resolve(serverName string) (model.VMMetadata, error) {
 		return model.VMMetadata{}, fmt.Errorf("%w: %s", ErrVMNotFound, serverName)
 	}
 	return meta, nil
+}
+
+func (r *Resolver) ResolveFirst() (model.VMMetadata, error) {
+	if err := r.refreshCacheIfNeeded(); err != nil {
+		return model.VMMetadata{}, err
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.ordered) == 0 {
+		return model.VMMetadata{}, fmt.Errorf("%w: no vm metadata found", ErrVMNotFound)
+	}
+	return r.ordered[0], nil
 }
 
 func (r *Resolver) labelFromServerName(serverName string) (string, error) {
@@ -112,6 +128,24 @@ func (r *Resolver) refreshCacheIfNeeded() error {
 		return err
 	}
 
+	sort.SliceStable(metas, func(i, j int) bool {
+		left := metas[i].CreatedAt
+		right := metas[j].CreatedAt
+		if left.IsZero() && right.IsZero() {
+			return metas[i].ID < metas[j].ID
+		}
+		if left.IsZero() {
+			return false
+		}
+		if right.IsZero() {
+			return true
+		}
+		if left.Equal(right) {
+			return metas[i].ID < metas[j].ID
+		}
+		return left.Before(right)
+	})
+
 	next := map[string]model.VMMetadata{}
 	for _, meta := range metas {
 		for _, alias := range aliasesForMeta(meta) {
@@ -124,8 +158,9 @@ func (r *Resolver) refreshCacheIfNeeded() error {
 	}
 
 	r.cache = next
+	r.ordered = append([]model.VMMetadata(nil), metas...)
 	r.cacheUntil = time.Now().Add(r.cacheTTL)
-	r.logger.Debug("forwarder resolver cache refreshed", "entries", len(next), "ttl", r.cacheTTL.String())
+	r.logger.Debug("forwarder resolver cache refreshed", "entries", len(next), "orderedVMs", len(r.ordered), "ttl", r.cacheTTL.String())
 	return nil
 }
 

@@ -73,3 +73,48 @@ func TestResolverResolveWithPrefixAndSuffix(t *testing.T) {
 		t.Fatalf("unexpected vm id: %s", byApp.ID)
 	}
 }
+
+func TestResolverResolveFirst(t *testing.T) {
+	root := t.TempDir()
+
+	olderID := "00000000-1111-2222-3333-444444444444"
+	newerID := "ffffffff-1111-2222-3333-444444444444"
+	olderDir := filepath.Join(root, olderID)
+	newerDir := filepath.Join(root, newerID)
+
+	if err := os.MkdirAll(olderDir, 0o755); err != nil {
+		t.Fatalf("mkdir older dir: %v", err)
+	}
+	if err := os.MkdirAll(newerDir, 0o755); err != nil {
+		t.Fatalf("mkdir newer dir: %v", err)
+	}
+
+	olderMeta := `{
+  "id":"00000000-1111-2222-3333-444444444444",
+  "createdAt":"2026-02-09T00:00:00Z",
+  "guestIP":"172.30.0.2",
+  "netns":"mergen-00000000"
+}`
+	newerMeta := `{
+  "id":"ffffffff-1111-2222-3333-444444444444",
+  "createdAt":"2026-02-10T00:00:00Z",
+  "guestIP":"172.30.0.3",
+  "netns":"mergen-ffffffff"
+}`
+
+	if err := os.WriteFile(filepath.Join(olderDir, "meta.json"), []byte(olderMeta), 0o644); err != nil {
+		t.Fatalf("write older meta: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(newerDir, "meta.json"), []byte(newerMeta), 0o644); err != nil {
+		t.Fatalf("write newer meta: %v", err)
+	}
+
+	resolver := NewResolver(root, "", "localhost", time.Second, nil)
+	first, err := resolver.ResolveFirst()
+	if err != nil {
+		t.Fatalf("resolve first: %v", err)
+	}
+	if first.ID != olderID {
+		t.Fatalf("expected older vm id %s, got %s", olderID, first.ID)
+	}
+}

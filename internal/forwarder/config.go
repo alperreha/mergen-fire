@@ -30,12 +30,12 @@ type Config struct {
 }
 
 func FromEnv() (Config, error) {
-	listeners, err := parseListeners(getEnv("FWD_LISTENERS", ":8443=8080,:9443=443,:10022=22"))
+	listeners, err := parseListeners(getEnv("FWD_LISTENERS", ":443=443,:2022=22,:5432=5432,:6379=6379,:9092=9092"))
 	if err != nil {
 		return Config{}, err
 	}
 
-	allowedPorts, err := parseAllowedPorts(getEnv("FWD_ALLOWED_GUEST_PORTS", "22,8080,443"))
+	allowedPorts, err := parseAllowedPorts(getEnv("FWD_ALLOWED_GUEST_PORTS", "22,443,5432,6379,9092"))
 	if err != nil {
 		return Config{}, err
 	}

@@ -12,8 +12,8 @@ Environment=FWD_CONFIG_ROOT=/etc/mergen/vm.d
 Environment=FWD_NETNS_ROOT=/run/netns
 Environment=FWD_DOMAIN_PREFIX=
 Environment=FWD_DOMAIN_SUFFIX=localhost
-Environment=FWD_LISTENERS=:8443=8080,:9443=443,:10022=22
-Environment=FWD_ALLOWED_GUEST_PORTS=22,8080,443
+Environment=FWD_LISTENERS=:443=443,:2022=22,:5432=5432,:6379=6379,:9092=9092
+Environment=FWD_ALLOWED_GUEST_PORTS=22,443,5432,6379,9092
 Environment=FWD_SHUTDOWN_TIMEOUT_SECONDS=15
 # Update cert file paths when using custom FWD_DOMAIN_PREFIX/FWD_DOMAIN_SUFFIX.
 Environment=FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt

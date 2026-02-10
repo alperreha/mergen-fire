@@ -150,24 +150,39 @@ go run ./cmd/mergen-forwarder
 
 Default forwarder listeners:
 
-- `:8443 -> guest:8080`
-- `:9443 -> guest:443`
-- `:10022 -> guest:22`
+- `:443 -> guest:443` (HTTPS)
+- `:2022 -> guest:22` (raw TCP test mode, no SNI; routes to first VM, avoids host `sshd` conflict)
+- `:5432 -> guest:5432` (PostgreSQL)
+- `:6379 -> guest:6379` (Redis)
+- `:9092 -> guest:9092` (Kafka)
 
-All listeners are TLS listeners (SNI is required). `:10022` is for TLS-wrapped traffic to guest `22`, not raw SSH protocol passthrough.
+`443/5432/6379/9092` listeners use TLS+SNI routing. `2022 -> 22` runs in raw TCP test mode and routes to the first VM found in resolver ordering.
 
-Example request:
+Example requests:
 
 ```bash
-curl -k --resolve app1.localhost:8443:127.0.0.1 https://app1.localhost:8443/
-curl -k --resolve 084604f6.localhost:8443:127.0.0.1 https://084604f6.localhost:8443/
+# HTTPS
+curl -k --resolve app1.localhost:443:127.0.0.1 https://app1.localhost/
+curl -k --resolve 084604f6.localhost:443:127.0.0.1 https://084604f6.localhost/
+
+# SSH (raw test mode -> first VM)
+ssh root@127.0.0.1 -p 2022
+
+# PostgreSQL (TLS with SNI)
+PGPASSWORD=postgres psql "host=app1.localhost port=5432 user=postgres dbname=app sslmode=require"
+
+# Redis (TLS with SNI)
+redis-cli --tls --insecure -h app1.localhost -p 6379 PING
+
+# Kafka (TLS with SNI, example with kcat)
+kcat -b app1.localhost:9092 -X security.protocol=ssl -X enable.ssl.certificate.verification=false -L
 ```
 
 With custom prefix/suffix:
 
 ```bash
 # FWD_DOMAIN_PREFIX=vm, FWD_DOMAIN_SUFFIX=example.com
-curl -k --resolve app1.vm.example.com:8443:127.0.0.1 https://app1.vm.example.com:8443/
+curl -k --resolve app1.vm.example.com:443:127.0.0.1 https://app1.vm.example.com/
 ```
 
 ## API behavior notes
@@ -230,8 +245,8 @@ Environment variables:
 - `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
 - `FWD_DOMAIN_PREFIX` (default empty)
 - `FWD_DOMAIN_SUFFIX` (default `localhost`)
-- `FWD_LISTENERS` (default `:8443=8080,:9443=443,:10022=22`)
-- `FWD_ALLOWED_GUEST_PORTS` (default `22,8080,443`)
+- `FWD_LISTENERS` (default `:443=443,:2022=22,:5432=5432,:6379=6379,:9092=9092`)
+- `FWD_ALLOWED_GUEST_PORTS` (default `22,443,5432,6379,9092`)
 - `FWD_DIAL_TIMEOUT_SECONDS` (default `5`)
 - `FWD_RESOLVER_CACHE_TTL_SECONDS` (default `5`)
 - `FWD_SHUTDOWN_TIMEOUT_SECONDS` (default `15`)
@@ -242,6 +257,8 @@ SNI matching:
 
 - prefix empty: `<label>.<suffix>`
 - prefix set: `<label>.<prefix>.<suffix>`
+
+This SNI rule applies to TLS listeners (`443/5432/6379/9092`). `2022 -> 22` raw test mode does not use SNI.
 
 ## Systemd template and scripts
 

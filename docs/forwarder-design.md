@@ -27,13 +27,16 @@ to running Firecracker guest services through VM network namespace.
 
 Forwarder listener mapping is explicit:
 
-- Example: `:8443=8080,:9443=443,:10022=22`
+- Example: `:443=443,:2022=22,:5432=5432,:6379=6379,:9092=9092`
   - Left side: external listen address
   - Right side: guest port inside VM
 
-Allowed guest ports are controlled by `FWD_ALLOWED_GUEST_PORTS` (default `22,8080,443`).
+Allowed guest ports are controlled by `FWD_ALLOWED_GUEST_PORTS` (default `22,443,5432,6379,9092`).
 
-Note: listeners are TLS listeners. If you map `:10022=22`, client must connect with TLS to `:10022`; plain SSH protocol on raw TCP is not handled by this component.
+Mode notes:
+
+- `:443`, `:5432`, `:6379`, `:9092` listeners use TLS termination and SNI-based VM routing.
+- `:2022=22` is a temporary raw TCP test mode (no TLS/SNI). It forwards to the first VM from resolver metadata ordering.
 
 ## Domain mapping model
 
@@ -46,6 +49,8 @@ Match rule:
 
 - If prefix empty: `<label>.<suffix>`
 - If prefix set: `<label>.<prefix>.<suffix>`
+
+This domain/SNI mapping is used by TLS listeners. Raw test mode (`:2022=22`) bypasses SNI resolution and picks the first VM.
 
 Examples:
 

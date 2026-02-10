@@ -40,9 +40,13 @@ func NewServer(config Config, resolver *Resolver, dialer Dialer, logger *slog.Lo
 		return nil, errors.New("dialer is nil")
 	}
 
-	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load tls cert/key: %w", err)
+	var cert tls.Certificate
+	if requiresTLSCertificate(config.Listeners) {
+		var err error
+		cert, err = tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load tls cert/key: %w", err)
+		}
 	}
 
 	return &Server{
@@ -53,6 +57,16 @@ func NewServer(config Config, resolver *Resolver, dialer Dialer, logger *slog.Lo
 		cert:     cert,
 		conns:    map[net.Conn]struct{}{},
 	}, nil
+}
+
+func requiresTLSCertificate(listeners []Listener) bool {
+	for _, listener := range listeners {
+		if isPlainFirstVMSSHListener(listener) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -81,6 +95,13 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) runListener(ctx context.Context, listenerCfg Listener) error {
+	if isPlainFirstVMSSHListener(listenerCfg) {
+		return s.runPlainListener(ctx, listenerCfg)
+	}
+	return s.runTLSListener(ctx, listenerCfg)
+}
+
+func (s *Server) runTLSListener(ctx context.Context, listenerCfg Listener) error {
 	base, err := net.Listen("tcp", listenerCfg.Addr)
 	if err != nil {
 		return fmt.Errorf("listen %s failed: %w", listenerCfg.Addr, err)
@@ -116,11 +137,50 @@ func (s *Server) runListener(ctx context.Context, listenerCfg Listener) error {
 
 		s.trackConn(conn)
 		s.connWG.Add(1)
-		go s.handleConn(conn, listenerCfg)
+		go s.handleTLSConn(conn, listenerCfg)
 	}
 }
 
-func (s *Server) handleConn(clientConn net.Conn, listenerCfg Listener) {
+func (s *Server) runPlainListener(ctx context.Context, listenerCfg Listener) error {
+	listener, err := net.Listen("tcp", listenerCfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen %s failed: %w", listenerCfg.Addr, err)
+	}
+	defer listener.Close()
+
+	s.logger.Info(
+		"forwarder plain listener started",
+		"listenAddr", listenerCfg.Addr,
+		"guestPort", listenerCfg.GuestPort,
+		"mode", "raw-first-vm",
+	)
+
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if isTemporary(err) {
+				s.logger.Warn("temporary accept error", "listenAddr", listenerCfg.Addr, "error", err)
+				time.Sleep(150 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("accept failed on %s: %w", listenerCfg.Addr, err)
+		}
+
+		s.trackConn(conn)
+		s.connWG.Add(1)
+		go s.handlePlainConn(conn, listenerCfg)
+	}
+}
+
+func (s *Server) handleTLSConn(clientConn net.Conn, listenerCfg Listener) {
 	defer s.connWG.Done()
 	defer s.untrackConn(clientConn)
 	defer clientConn.Close()
@@ -179,6 +239,63 @@ func (s *Server) handleConn(clientConn net.Conn, listenerCfg Listener) {
 	)
 
 	proxyStreams(tlsConn, backendConn)
+}
+
+func (s *Server) handlePlainConn(clientConn net.Conn, listenerCfg Listener) {
+	defer s.connWG.Done()
+	defer s.untrackConn(clientConn)
+	defer clientConn.Close()
+
+	meta, err := s.resolver.ResolveFirst()
+	if err != nil {
+		s.logger.Warn("plain listener could not resolve first vm", "listenAddr", listenerCfg.Addr, "error", err)
+		return
+	}
+
+	targetAddr := net.JoinHostPort(meta.GuestIP, strconv.Itoa(listenerCfg.GuestPort))
+	dialCtx, cancel := context.WithTimeout(context.Background(), s.config.DialTimeout)
+	defer cancel()
+
+	backendConn, err := s.dialer.DialContext(dialCtx, "tcp", targetAddr, meta.NetNS)
+	if err != nil {
+		s.logger.Warn(
+			"plain backend dial failed",
+			"listenAddr", listenerCfg.Addr,
+			"vmID", meta.ID,
+			"netns", meta.NetNS,
+			"targetAddr", targetAddr,
+			"error", err,
+		)
+		return
+	}
+	defer backendConn.Close()
+
+	s.logger.Debug(
+		"plain connection routed",
+		"listenAddr", listenerCfg.Addr,
+		"vmID", meta.ID,
+		"netns", meta.NetNS,
+		"targetAddr", targetAddr,
+		"remoteAddr", clientConn.RemoteAddr().String(),
+		"mode", "raw-first-vm",
+	)
+
+	proxyStreams(clientConn, backendConn)
+}
+
+func isPlainFirstVMSSHListener(listenerCfg Listener) bool {
+	if listenerCfg.GuestPort != 22 {
+		return false
+	}
+	_, port, err := net.SplitHostPort(listenerCfg.Addr)
+	if err != nil {
+		return false
+	}
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil {
+		return false
+	}
+	return parsedPort == 2022
 }
 
 func (s *Server) waitForConnections() {
