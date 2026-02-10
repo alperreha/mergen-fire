@@ -158,6 +158,28 @@ Custom output path/name/size:
 Script also writes image startup metadata and an `/init` wrapper that executes image `Entrypoint + Cmd`.
 Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `init=/init`.
 
+### Standalone Firecracker smoke test (without mergend)
+
+After generating rootfs, validate it directly with Firecracker + API:
+
+```bash
+sudo ./scripts/test-firecracker-rootfs.sh \
+  --kernel /var/lib/mergen/base/vmlinux \
+  --rootfs /var/lib/mergen/base/nginx/rootfs.ext4
+```
+
+Using existing vm.json defaults:
+
+```bash
+sudo ./scripts/test-firecracker-rootfs.sh \
+  --vm-json /etc/mergen/vm.d/<vm-id>/vm.json \
+  --guest-ip 172.30.0.2 \
+  --host-ip 172.30.0.1
+```
+
+Script creates test netns/tap, starts Firecracker in that netns, configures VM via API socket, then opens an interactive netns shell.
+Exit the shell to trigger cleanup (or use `--keep-run-dir` to keep logs).
+
 ### Run TLS SNI forwarder
 
 ```bash
