@@ -24,7 +24,7 @@ if ! command -v ip >/dev/null 2>&1; then
   exit 1
 fi
 
-NETNS_NAME="${MGN_NETNS:-mergen-${VM_ID:0:8}}"
+NETNS_NAME="${MGN_NETNS:-${FC_NETNS:-mergen-${VM_ID:0:8}}}"
 if ! ip netns list | awk '{print $1}' | grep -Fxq "${NETNS_NAME}"; then
   ip netns add "${NETNS_NAME}"
 fi

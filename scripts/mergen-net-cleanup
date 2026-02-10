@@ -11,7 +11,7 @@ fi
 
 # Cleanup named netns created by mergen-net-setup.
 if command -v ip >/dev/null 2>&1; then
-  NETNS_NAME="${MGN_NETNS:-mergen-${VM_ID:0:8}}"
+  NETNS_NAME="${MGN_NETNS:-${FC_NETNS:-mergen-${VM_ID:0:8}}}"
   if ip netns list | awk '{print $1}' | grep -Fxq "${NETNS_NAME}"; then
     ip netns delete "${NETNS_NAME}" || true
   fi
