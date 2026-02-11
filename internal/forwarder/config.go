@@ -2,40 +2,30 @@ package forwarder
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type Listener struct {
-	Addr      string
-	GuestPort int
-}
-
 type Config struct {
-	ConfigRoot        string
-	NetNSRoot         string
-	CertFile          string
-	KeyFile           string
-	DomainPrefix      string
-	DomainSuffix      string
-	LogLevel          string
-	LogFormat         string
-	Listeners         []Listener
-	DialTimeout       time.Duration
-	ResolverCacheTTL  time.Duration
-	ShutdownTimeout   time.Duration
-	AllowedGuestPorts map[int]struct{}
+	ConfigRoot       string
+	NetNSRoot        string
+	CertFile         string
+	KeyFile          string
+	HTTPSAddr        string
+	DomainPrefix     string
+	DomainSuffix     string
+	LogLevel         string
+	LogFormat        string
+	DialTimeout      time.Duration
+	ResolverCacheTTL time.Duration
+	ShutdownTimeout  time.Duration
 }
 
 func FromEnv() (Config, error) {
-	listeners, err := parseListeners(getEnv("FWD_LISTENERS", ":443=443,:2022=22,:5432=5432,:6379=6379,:9092=9092"))
-	if err != nil {
-		return Config{}, err
-	}
-
-	allowedPorts, err := parseAllowedPorts(getEnv("FWD_ALLOWED_GUEST_PORTS", "22,443,5432,6379,9092"))
+	httpsAddr, err := normalizeListenAddr(getEnv("FWD_HTTPS_ADDR", ":443"))
 	if err != nil {
 		return Config{}, err
 	}
@@ -49,25 +39,18 @@ func FromEnv() (Config, error) {
 	defaultCertBase := domainBase(domainPrefix, domainSuffix)
 
 	cfg := Config{
-		ConfigRoot:        getEnv("FWD_CONFIG_ROOT", "/etc/mergen/vm.d"),
-		NetNSRoot:         getEnv("FWD_NETNS_ROOT", "/run/netns"),
-		CertFile:          getEnv("FWD_TLS_CERT_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".crt"),
-		KeyFile:           getEnv("FWD_TLS_KEY_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".key"),
-		DomainPrefix:      domainPrefix,
-		DomainSuffix:      domainSuffix,
-		LogLevel:          getEnv("FWD_LOG_LEVEL", "debug"),
-		LogFormat:         getEnv("FWD_LOG_FORMAT", "console"),
-		Listeners:         listeners,
-		DialTimeout:       time.Duration(getEnvInt("FWD_DIAL_TIMEOUT_SECONDS", 5)) * time.Second,
-		ResolverCacheTTL:  time.Duration(getEnvInt("FWD_RESOLVER_CACHE_TTL_SECONDS", 5)) * time.Second,
-		ShutdownTimeout:   time.Duration(getEnvInt("FWD_SHUTDOWN_TIMEOUT_SECONDS", 15)) * time.Second,
-		AllowedGuestPorts: allowedPorts,
-	}
-
-	for _, listener := range cfg.Listeners {
-		if _, ok := cfg.AllowedGuestPorts[listener.GuestPort]; !ok {
-			return Config{}, fmt.Errorf("listener guest port is not allowed: %d", listener.GuestPort)
-		}
+		ConfigRoot:       getEnv("FWD_CONFIG_ROOT", "/etc/mergen/vm.d"),
+		NetNSRoot:        getEnv("FWD_NETNS_ROOT", "/run/netns"),
+		CertFile:         getEnv("FWD_TLS_CERT_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".crt"),
+		KeyFile:          getEnv("FWD_TLS_KEY_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".key"),
+		HTTPSAddr:        httpsAddr,
+		DomainPrefix:     domainPrefix,
+		DomainSuffix:     domainSuffix,
+		LogLevel:         getEnv("FWD_LOG_LEVEL", "debug"),
+		LogFormat:        getEnv("FWD_LOG_FORMAT", "console"),
+		DialTimeout:      time.Duration(getEnvInt("FWD_DIAL_TIMEOUT_SECONDS", 5)) * time.Second,
+		ResolverCacheTTL: time.Duration(getEnvInt("FWD_RESOLVER_CACHE_TTL_SECONDS", 5)) * time.Second,
+		ShutdownTimeout:  time.Duration(getEnvInt("FWD_SHUTDOWN_TIMEOUT_SECONDS", 15)) * time.Second,
 	}
 
 	return cfg, nil
@@ -86,63 +69,23 @@ func normalizeDomainPart(raw string) string {
 	return part
 }
 
-func parseListeners(raw string) ([]Listener, error) {
-	parts := strings.Split(raw, ",")
-	listeners := make([]Listener, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		pair := strings.SplitN(part, "=", 2)
-		if len(pair) != 2 {
-			return nil, fmt.Errorf("invalid listener format: %q", part)
-		}
-
-		addr := strings.TrimSpace(pair[0])
-		if addr == "" {
-			return nil, fmt.Errorf("listener address is empty in %q", part)
-		}
-		if !strings.Contains(addr, ":") {
-			addr = ":" + addr
-		}
-
-		guestPort, err := strconv.Atoi(strings.TrimSpace(pair[1]))
-		if err != nil || guestPort <= 0 || guestPort > 65535 {
-			return nil, fmt.Errorf("invalid guest port in listener %q", part)
-		}
-
-		listeners = append(listeners, Listener{
-			Addr:      addr,
-			GuestPort: guestPort,
-		})
+func normalizeListenAddr(raw string) (string, error) {
+	addr := strings.TrimSpace(raw)
+	if addr == "" {
+		return "", fmt.Errorf("FWD_HTTPS_ADDR cannot be empty")
 	}
-
-	if len(listeners) == 0 {
-		return nil, fmt.Errorf("no listeners configured")
+	if !strings.Contains(addr, ":") {
+		addr = ":" + addr
 	}
-
-	return listeners, nil
-}
-
-func parseAllowedPorts(raw string) (map[int]struct{}, error) {
-	ports := map[int]struct{}{}
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		port, err := strconv.Atoi(part)
-		if err != nil || port <= 0 || port > 65535 {
-			return nil, fmt.Errorf("invalid allowed guest port: %q", part)
-		}
-		ports[port] = struct{}{}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("invalid FWD_HTTPS_ADDR %q: %w", raw, err)
 	}
-	if len(ports) == 0 {
-		return nil, fmt.Errorf("allowed guest ports list is empty")
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil || parsedPort <= 0 || parsedPort > 65535 {
+		return "", fmt.Errorf("invalid https listen port in FWD_HTTPS_ADDR: %q", port)
 	}
-	return ports, nil
+	return addr, nil
 }
 
 func getEnv(key, fallback string) string {

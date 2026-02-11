@@ -22,7 +22,7 @@ func main() {
 		"starting forwarder",
 		"configRoot", cfg.ConfigRoot,
 		"netnsRoot", cfg.NetNSRoot,
-		"listeners", len(cfg.Listeners),
+		"httpsAddr", cfg.HTTPSAddr,
 		"domainPrefix", cfg.DomainPrefix,
 		"domainSuffix", cfg.DomainSuffix,
 	)

@@ -1,49 +1,35 @@
-# Forwarder Design (Pre-Envoy)
+# Forwarder Design (HTTPS-Only Bridge)
 
-This document describes the `mergen-forwarder` design used before Envoy/xDS integration.
+This document describes the current `mergen-forwarder` behavior before Envoy/xDS integration.
 
 ## Goal
 
-Route external TLS traffic from wildcard domains such as:
+Route external HTTPS traffic from wildcard domains such as:
 
 - `app1.localhost`
 - `<uuid>.localhost`
 - `app1.vm.example.com` (when prefix/suffix configured)
 
-to running Firecracker guest services through VM network namespace.
+to HTTP services running inside Firecracker VMs.
 
 ## Flow
 
-1. Client connects to forwarder TLS listener.
+1. Client connects to forwarder HTTPS listener (`FWD_HTTPS_ADDR`, default `:443`).
 2. Forwarder terminates TLS with wildcard certificate (`*.{prefix.}suffix`, configured at runtime).
 3. Forwarder reads SNI (`ServerName`) from TLS handshake.
 4. SNI label is resolved to VM metadata from `/etc/mergen/vm.d/<id>/meta.json`.
-5. Forwarder enters VM netns (`${FWD_NETNS_ROOT}/<name>`, default `/run/netns`) for dial operation.
-6. Forwarder dials guest IP + target guest port.
-7. Bidirectional TCP stream copy starts.
-8. Response flows back to client over the same TLS connection.
+5. Forwarder reads VM `httpPort` from resolved metadata.
+6. Forwarder enters VM netns (`${FWD_NETNS_ROOT}/<name>`, default `/run/netns`) for dial operation.
+7. Forwarder dials `guestIP:httpPort`.
+8. Bidirectional TCP stream copy starts and response flows back to client.
 
-## Port model
+## Port Model
 
-Forwarder listener mapping is explicit:
+- Forwarder only listens on HTTPS (`FWD_HTTPS_ADDR`).
+- Backend target is always `meta.httpPort` of the resolved VM.
+- If VM has no valid `httpPort`, forwarder returns `502`.
 
-- Example: `:443=443,:2022=22,:5432=5432,:6379=6379,:9092=9092`
-  - Left side: external listen address
-  - Right side: guest port inside VM
-
-HTTPS special-case:
-
-- On listener `:443`, if resolved VM metadata includes `httpPort`, forwarder uses `guestIP:httpPort`.
-- If `httpPort` is absent, it falls back to listener guest port (`443` in default config).
-
-Allowed guest ports are controlled by `FWD_ALLOWED_GUEST_PORTS` (default `22,443,5432,6379,9092`).
-
-Mode notes:
-
-- `:443`, `:5432`, `:6379`, `:9092` listeners use TLS termination and SNI-based VM routing.
-- `:2022=22` is a temporary raw TCP test mode (no TLS/SNI). It forwards to the first VM from resolver metadata ordering.
-
-## Domain mapping model
+## Domain Mapping Model
 
 Runtime config:
 
@@ -55,14 +41,12 @@ Match rule:
 - If prefix empty: `<label>.<suffix>`
 - If prefix set: `<label>.<prefix>.<suffix>`
 
-This domain/SNI mapping is used by TLS listeners. Raw test mode (`:2022=22`) bypasses SNI resolution and picks the first VM.
-
 Examples:
 
 - `FWD_DOMAIN_PREFIX=""`, `FWD_DOMAIN_SUFFIX="localhost"` -> `app1.localhost`
 - `FWD_DOMAIN_PREFIX="vm"`, `FWD_DOMAIN_SUFFIX="example.com"` -> `app1.vm.example.com`
 
-## SNI to VM mapping
+## SNI to VM Mapping
 
 Resolver aliases:
 
@@ -76,22 +60,16 @@ Example:
 - SNI `app1.localhost` -> VM with `tags.app=app1`
 - SNI `084604f6.localhost` -> VM with ID starting `084604f6`
 
-## Why TLS termination now
-
-- Matches future production path where TLS is always present.
-- Enables immediate HTTPS validation without waiting for Envoy integration.
-- Keeps routing logic simple and observable.
-
-## Linux dependency
+## Linux Dependency
 
 Namespace-based dialing uses `setns()` and works only on Linux hosts.
 
 On non-Linux platforms, forwarder starts but netns dial returns an explicit error.
 
-## Migration to Envoy later
+## Migration to Envoy Later
 
 `mergen-forwarder` is a temporary bridge:
 
-- Replace SNI resolver with xDS/Consul source.
+- Replace filesystem-based resolver with xDS/Consul source.
 - Move L7 policies/retries/observability to Envoy.
 - Keep VM metadata and lifecycle state model unchanged.
