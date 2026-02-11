@@ -31,6 +31,11 @@ Forwarder listener mapping is explicit:
   - Left side: external listen address
   - Right side: guest port inside VM
 
+HTTPS special-case:
+
+- On listener `:443`, if resolved VM metadata includes `httpPort`, forwarder uses `guestIP:httpPort`.
+- If `httpPort` is absent, it falls back to listener guest port (`443` in default config).
+
 Allowed guest ports are controlled by `FWD_ALLOWED_GUEST_PORTS` (default `22,443,5432,6379,9092`).
 
 Mode notes:

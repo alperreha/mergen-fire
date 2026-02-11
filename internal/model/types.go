@@ -16,6 +16,7 @@ type CreateVMRequest struct {
 	VCPU      int                    `json:"vcpu"`
 	MemMiB    int                    `json:"memMiB"`
 	Ports     []PortBindingRequest   `json:"ports,omitempty"`
+	HTTPPort  int                    `json:"httpPort,omitempty"`
 	Metadata  map[string]any         `json:"metadata,omitempty"`
 	AutoStart bool                   `json:"autoStart,omitempty"`
 	BootArgs  string                 `json:"bootArgs,omitempty"`
@@ -56,6 +57,7 @@ type VMMetadata struct {
 	Kernel    string                 `json:"kernel"`
 	DataDisk  string                 `json:"dataDisk,omitempty"`
 	Ports     []PortBinding          `json:"ports"`
+	HTTPPort  int                    `json:"httpPort,omitempty"`
 	GuestIP   string                 `json:"guestIP"`
 	TapName   string                 `json:"tapName"`
 	NetNS     string                 `json:"netns"`

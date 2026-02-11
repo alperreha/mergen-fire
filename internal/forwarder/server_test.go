@@ -1,6 +1,10 @@
 package forwarder
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/alperreha/mergen-fire/internal/model"
+)
 
 func TestIsPlainFirstVMSSHListener(t *testing.T) {
 	cases := []struct {
@@ -47,5 +51,40 @@ func TestRequiresTLSCertificate(t *testing.T) {
 	}
 	if !requiresTLSCertificate(mixed) {
 		t.Fatalf("mixed listener set should require tls certificate")
+	}
+}
+
+func TestResolveTargetGuestPort(t *testing.T) {
+	cases := []struct {
+		name     string
+		listener Listener
+		meta     model.VMMetadata
+		want     int
+	}{
+		{
+			name:     "https listener uses vm http port",
+			listener: Listener{Addr: ":443", GuestPort: 443},
+			meta:     model.VMMetadata{HTTPPort: 80},
+			want:     80,
+		},
+		{
+			name:     "https listener falls back to listener guest port",
+			listener: Listener{Addr: ":443", GuestPort: 443},
+			meta:     model.VMMetadata{},
+			want:     443,
+		},
+		{
+			name:     "non-https listener keeps static guest port",
+			listener: Listener{Addr: ":5432", GuestPort: 5432},
+			meta:     model.VMMetadata{HTTPPort: 80},
+			want:     5432,
+		},
+	}
+
+	for _, tc := range cases {
+		got := resolveTargetGuestPort(tc.listener, tc.meta)
+		if got != tc.want {
+			t.Fatalf("%s: expected %d, got %d", tc.name, tc.want, got)
+		}
 	}
 }

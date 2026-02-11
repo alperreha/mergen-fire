@@ -34,6 +34,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
   - `env` (systemd env file)
 - `systemd` service model: `mergen@<uuid>.service`
 - Basic port publish + sequential IP allocation
+- Per-VM HTTP target port metadata (`httpPort`) for TLS-terminated `:443` routing
 - Per-VM lock file to prevent lifecycle race conditions
 - Structured logging with configurable level/format
 - Best-effort hooks:
@@ -103,7 +104,8 @@ curl -s -X POST http://127.0.0.1:8080/v1/vms \
     "kernel": "/var/lib/mergen/base/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
-    "ports": [{"guest": 8080, "host": 0}],
+    "ports": [{"guest": 80, "host": 0}],
+    "httpPort": 80,
     "tags": {"app": "app1"},
     "autoStart": false
   }'
@@ -193,13 +195,15 @@ go run ./cmd/mergen-forwarder
 
 Default forwarder listeners:
 
-- `:443 -> guest:443` (HTTPS)
+- `:443 -> guest:443` (HTTPS listener; if VM metadata has `httpPort`, forwards to that guest port)
 - `:2022 -> guest:22` (raw TCP test mode, no SNI; routes to first VM, avoids host `sshd` conflict)
 - `:5432 -> guest:5432` (PostgreSQL)
 - `:6379 -> guest:6379` (Redis)
 - `:9092 -> guest:9092` (Kafka)
 
 `443/5432/6379/9092` listeners use TLS+SNI routing. `2022 -> 22` runs in raw TCP test mode and routes to the first VM found in resolver ordering.
+
+When `meta.json` includes `httpPort`, the HTTPS listener on `:443` routes to `guestIP:httpPort` for that VM. If `httpPort` is not set, it falls back to listener guest port (`443` by default).
 
 Example requests:
 
@@ -253,6 +257,10 @@ Environment variables:
 - `MGR_GUEST_CIDR` (default `172.30.0.0/24`)
 - `MGR_LOG_LEVEL` (default `info`, values: `debug|info|warn|error`)
 - `MGR_LOG_FORMAT` (default `console`, values: `console|json|text`)
+
+`POST /v1/vms` supports:
+
+- `httpPort` (optional): Guest HTTP port for TLS-terminated `:443` forwarder routing.
 
 Enable verbose debugging:
 

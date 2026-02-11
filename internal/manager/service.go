@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,6 +109,7 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 		Kernel:    req.Kernel,
 		DataDisk:  req.DataDisk,
 		Ports:     ports,
+		HTTPPort:  req.HTTPPort,
 		GuestIP:   guestIP,
 		TapName:   network.TapName(vmID),
 		NetNS:     network.NetNSName(vmID),
@@ -349,6 +351,9 @@ func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, extra map[
 		"MGN_DATA_DIR":    paths.DataDir,
 		"MGN_LOG_DIR":     paths.LogsDir,
 	}
+	if meta.HTTPPort > 0 {
+		env["MGN_HTTP_PORT"] = strconv.Itoa(meta.HTTPPort)
+	}
 
 	for _, p := range meta.Ports {
 		env[fmt.Sprintf("MGN_PUBLISH_%d", p.Guest)] = fmt.Sprintf("%d/%s", p.Host, p.Protocol)
@@ -476,6 +481,9 @@ func validateCreate(req model.CreateVMRequest) error {
 		if p.Host < 0 || p.Host > 65535 {
 			return fmt.Errorf("invalid host port: %d", p.Host)
 		}
+	}
+	if req.HTTPPort < 0 || req.HTTPPort > 65535 {
+		return fmt.Errorf("invalid httpPort: %d", req.HTTPPort)
 	}
 	return nil
 }

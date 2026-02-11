@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/alperreha/mergen-fire/internal/model"
 )
 
 type Dialer interface {
@@ -210,7 +212,8 @@ func (s *Server) handleTLSConn(clientConn net.Conn, listenerCfg Listener) {
 		return
 	}
 
-	targetAddr := net.JoinHostPort(meta.GuestIP, strconv.Itoa(listenerCfg.GuestPort))
+	targetGuestPort := resolveTargetGuestPort(listenerCfg, meta)
+	targetAddr := net.JoinHostPort(meta.GuestIP, strconv.Itoa(targetGuestPort))
 	dialCtx, cancel := context.WithTimeout(context.Background(), s.config.DialTimeout)
 	defer cancel()
 
@@ -222,6 +225,7 @@ func (s *Server) handleTLSConn(clientConn net.Conn, listenerCfg Listener) {
 			"vmID", meta.ID,
 			"netns", meta.NetNS,
 			"targetAddr", targetAddr,
+			"targetGuestPort", targetGuestPort,
 			"error", err,
 		)
 		_ = writeHTTPError(tlsConn, 502, "backend unavailable")
@@ -235,6 +239,7 @@ func (s *Server) handleTLSConn(clientConn net.Conn, listenerCfg Listener) {
 		"vmID", meta.ID,
 		"netns", meta.NetNS,
 		"targetAddr", targetAddr,
+		"targetGuestPort", targetGuestPort,
 		"remoteAddr", tlsConn.RemoteAddr().String(),
 	)
 
@@ -281,6 +286,25 @@ func (s *Server) handlePlainConn(clientConn net.Conn, listenerCfg Listener) {
 	)
 
 	proxyStreams(clientConn, backendConn)
+}
+
+func resolveTargetGuestPort(listenerCfg Listener, meta model.VMMetadata) int {
+	if isHTTPSListener(listenerCfg) && meta.HTTPPort > 0 {
+		return meta.HTTPPort
+	}
+	return listenerCfg.GuestPort
+}
+
+func isHTTPSListener(listenerCfg Listener) bool {
+	_, port, err := net.SplitHostPort(listenerCfg.Addr)
+	if err != nil {
+		return false
+	}
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil {
+		return false
+	}
+	return parsedPort == 443
 }
 
 func isPlainFirstVMSSHListener(listenerCfg Listener) bool {
