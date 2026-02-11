@@ -10,7 +10,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - `mergend`: VM lifecycle manager (control-plane)
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
-- `mergen-converter`: Docker image -> OCI-aligned MicroVM rootfs converter
+- `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
 
 ## Why this project
 
@@ -48,7 +48,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - **Control plane:** Go HTTP API server (`cmd/mergend`)
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
-- **Image conversion plane:** Docker-to-rootfs converter (`cmd/mergen-converter`)
+- **Image conversion plane:** Registry-image-to-rootfs converter (`cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
 
@@ -58,11 +58,11 @@ Forwarder design details: `docs/forwarder-design.md`
 
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
-- `cmd/mergen-converter`: Docker image conversion CLI
+- `cmd/mergen-converter`: registry image conversion CLI
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
-- `internal/converter`: image pull/export/rootfs/ext4 conversion pipeline
+- `internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
 - `internal/store`: filesystem persistence
 - `internal/systemd`: `systemctl` wrapper
 - `internal/firecracker`: VM config rendering and socket probe
@@ -80,9 +80,13 @@ Forwarder design details: `docs/forwarder-design.md`
   - `firecracker`
   - `jailer`
   - `ip` + `iptables`/`nft`
-  - `docker`
   - `mkfs.ext4` + `truncate`
 - Go 1.24+
+
+Optional (only for legacy helper script `scripts/build-rootfs-from-dockerhub.sh`):
+
+- `docker`
+- `jq`
 
 > Note: This repo can be developed on macOS, but actual VM runtime requires a Linux host with `systemd` and Firecracker.
 
@@ -183,6 +187,9 @@ go run ./cmd/mergen-converter \
   -image nginx:alpine \
   -output-dir ./artifacts/converter/nginx-alpine
 ```
+
+`mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
+Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
 
 Converter outputs:
 

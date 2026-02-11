@@ -26,7 +26,7 @@ func main() {
 	flag.StringVar(&outputDir, "output-dir", "", "Output directory (default: ./artifacts/converter/<sanitized-image>)")
 	flag.StringVar(&name, "name", "", "Output name (used when output-dir is empty)")
 	flag.IntVar(&sizeMiB, "size-mib", 0, "ext4 image size in MiB (0 = auto)")
-	flag.BoolVar(&skipPull, "skip-pull", false, "Skip docker pull and use local image")
+	flag.BoolVar(&skipPull, "skip-pull", false, "Skip remote pull and reuse previously cached image blobs in output-dir/image-cache")
 	flag.StringVar(&sbinInitPath, "sbin-init", "./artifacts/sbin-init/sbin-init", "Path to sbin init binary to inject into rootfs")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug|info|warn|error)")
 	flag.StringVar(&logFormat, "log-format", "console", "Log format (console|json|text)")

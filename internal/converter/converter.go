@@ -13,10 +13,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	digest "github.com/opencontainers/go-digest"
+	dockertransport "go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/pkg/blobinfocache/none"
+	"go.podman.io/image/v5/types"
+	storagearchive "go.podman.io/storage/pkg/archive"
 )
 
 const (
@@ -66,9 +73,6 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	if err := ensureCommand("docker"); err != nil {
-		return Result{}, err
-	}
 	if err := ensureCommand("truncate"); err != nil {
 		return Result{}, err
 	}
@@ -98,43 +102,39 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("create rootfs dir: %w", err)
 	}
 
-	if !normalized.SkipPull {
-		r.logger.Info("pulling image", "image", normalized.Image)
-		if _, err := runCommand(ctx, "docker", "pull", normalized.Image); err != nil {
+	cacheDir := filepath.Join(normalized.OutputDir, "image-cache")
+	var pulled pulledImage
+	if normalized.SkipPull {
+		r.logger.Info("loading cached pulled image", "cacheDir", cacheDir)
+		pulled, err = readCachedImage(cacheDir)
+		if err != nil {
+			return Result{}, err
+		}
+	} else {
+		r.logger.Info("pulling image via containers/image docker transport", "image", normalized.Image, "cacheDir", cacheDir)
+		pulled, err = pullAndCacheImage(ctx, normalized.Image, cacheDir)
+		if err != nil {
 			return Result{}, err
 		}
 	}
 
-	cfg, err := inspectImageConfig(ctx, normalized.Image)
-	if err != nil {
-		return Result{}, err
-	}
-	startCmd := composeStartCommand(cfg.Entrypoint, cfg.Cmd)
-	suggestedHTTPPort := inferHTTPPort(cfg.ExposedPorts)
+	startCmd := composeStartCommand(pulled.Config.Entrypoint, pulled.Config.Cmd)
+	suggestedHTTPPort := inferHTTPPort(pulled.Config.ExposedPorts)
 
-	r.logger.Info("exporting image filesystem", "image", normalized.Image)
-	containerID, err := createContainer(ctx, normalized.Image)
-	if err != nil {
-		return Result{}, err
-	}
-	defer func() {
-		_, _ = runCommand(context.Background(), "docker", "rm", "-f", containerID)
-	}()
-
-	if err := exportContainerFS(ctx, containerID, rootfsDir); err != nil {
+	if err := applyLayers(pulled.Layers, rootfsDir); err != nil {
 		return Result{}, err
 	}
 
 	imageMeta := metadata{
 		Image:             normalized.Image,
 		CreatedAt:         time.Now().UTC(),
-		Entrypoint:        cloneStrings(cfg.Entrypoint),
-		Cmd:               cloneStrings(cfg.Cmd),
+		Entrypoint:        cloneStrings(pulled.Config.Entrypoint),
+		Cmd:               cloneStrings(pulled.Config.Cmd),
 		StartCmd:          cloneStrings(startCmd),
-		Env:               cloneStrings(cfg.Env),
-		WorkingDir:        cfg.WorkingDir,
-		User:              cfg.User,
-		ExposedPorts:      exposedPortsList(cfg.ExposedPorts),
+		Env:               cloneStrings(pulled.Config.Env),
+		WorkingDir:        pulled.Config.WorkingDir,
+		User:              pulled.Config.User,
+		ExposedPorts:      exposedPortsList(pulled.Config.ExposedPorts),
 		SuggestedHTTPPort: suggestedHTTPPort,
 	}
 
@@ -302,30 +302,393 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 	return nil, fmt.Errorf("%s %s failed: %w", name, strings.Join(args, " "), err)
 }
 
-type dockerImageConfig struct {
-	Entrypoint   []string            `json:"Entrypoint"`
-	Cmd          []string            `json:"Cmd"`
-	Env          []string            `json:"Env"`
-	WorkingDir   string              `json:"WorkingDir"`
-	User         string              `json:"User"`
-	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+type imageRuntimeConfig struct {
+	Entrypoint   []string
+	Cmd          []string
+	Env          []string
+	WorkingDir   string
+	User         string
+	ExposedPorts map[string]struct{}
 }
 
-func inspectImageConfig(ctx context.Context, image string) (dockerImageConfig, error) {
-	out, err := runCommand(ctx, "docker", "image", "inspect", image, "--format", "{{json .Config}}")
-	if err != nil {
-		return dockerImageConfig{}, err
+type layerFile struct {
+	Digest digest.Digest
+	Path   string
+}
+
+type pulledImage struct {
+	Config imageRuntimeConfig
+	Layers []layerFile
+}
+
+type configBlob struct {
+	Config struct {
+		Entrypoint   []string            `json:"Entrypoint"`
+		Cmd          []string            `json:"Cmd"`
+		Env          []string            `json:"Env"`
+		WorkingDir   string              `json:"WorkingDir"`
+		User         string              `json:"User"`
+		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+	} `json:"config"`
+}
+
+type platformSpec struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
+	Variant      string `json:"variant,omitempty"`
+}
+
+type manifestDescriptor struct {
+	MediaType string        `json:"mediaType"`
+	Digest    string        `json:"digest"`
+	Size      int64         `json:"size"`
+	URLs      []string      `json:"urls,omitempty"`
+	Platform  *platformSpec `json:"platform,omitempty"`
+}
+
+type manifestList struct {
+	MediaType string               `json:"mediaType"`
+	Manifests []manifestDescriptor `json:"manifests"`
+}
+
+type imageManifest struct {
+	MediaType string               `json:"mediaType"`
+	Config    manifestDescriptor   `json:"config"`
+	Layers    []manifestDescriptor `json:"layers"`
+}
+
+func pullAndCacheImage(ctx context.Context, image, cacheDir string) (pulledImage, error) {
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return pulledImage{}, fmt.Errorf("clean image cache dir: %w", err)
 	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" || trimmed == "null" {
-		return dockerImageConfig{}, fmt.Errorf("docker inspect returned empty config for image %q", image)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return pulledImage{}, fmt.Errorf("create image cache dir: %w", err)
 	}
 
-	var cfg dockerImageConfig
-	if err := json.Unmarshal([]byte(trimmed), &cfg); err != nil {
-		return dockerImageConfig{}, fmt.Errorf("decode docker image config: %w", err)
+	ref, err := dockertransport.ParseReference(normalizedDockerReference(image))
+	if err != nil {
+		return pulledImage{}, fmt.Errorf("parse docker image reference: %w", err)
 	}
-	return cfg, nil
+
+	src, err := ref.NewImageSource(ctx, &types.SystemContext{})
+	if err != nil {
+		return pulledImage{}, fmt.Errorf("open image source: %w", err)
+	}
+	defer src.Close()
+
+	manifestBytes, manifestMIME, err := resolveSingleManifest(ctx, src)
+	if err != nil {
+		return pulledImage{}, err
+	}
+	_ = manifestMIME
+
+	parsedManifest, err := parseImageManifest(manifestBytes)
+	if err != nil {
+		return pulledImage{}, err
+	}
+
+	configDigest, err := parseDigest(parsedManifest.Config.Digest)
+	if err != nil {
+		return pulledImage{}, fmt.Errorf("invalid config digest: %w", err)
+	}
+	configBytes, err := downloadBlobToBytes(ctx, src, types.BlobInfo{
+		Digest:    configDigest,
+		Size:      parsedManifest.Config.Size,
+		MediaType: parsedManifest.Config.MediaType,
+		URLs:      cloneStrings(parsedManifest.Config.URLs),
+	})
+	if err != nil {
+		return pulledImage{}, fmt.Errorf("download config blob: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(cacheDir, "manifest.json"), manifestBytes, 0o644); err != nil {
+		return pulledImage{}, fmt.Errorf("write cached manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "config.json"), configBytes, 0o644); err != nil {
+		return pulledImage{}, fmt.Errorf("write cached config: %w", err)
+	}
+
+	var cfgBlob configBlob
+	if err := json.Unmarshal(configBytes, &cfgBlob); err != nil {
+		return pulledImage{}, fmt.Errorf("decode image config blob: %w", err)
+	}
+
+	layers := make([]layerFile, 0, len(parsedManifest.Layers))
+	for idx, layer := range parsedManifest.Layers {
+		layerDigest, err := parseDigest(layer.Digest)
+		if err != nil {
+			return pulledImage{}, fmt.Errorf("invalid layer digest at index %d: %w", idx, err)
+		}
+
+		layerPath := cachedLayerPath(cacheDir, layerDigest)
+		layerInfo := types.BlobInfo{
+			Digest:    layerDigest,
+			Size:      layer.Size,
+			MediaType: layer.MediaType,
+			URLs:      cloneStrings(layer.URLs),
+		}
+		if err := downloadBlobToFile(ctx, src, layerInfo, layerPath); err != nil {
+			return pulledImage{}, fmt.Errorf("download layer %d (%s): %w", idx, layerDigest.String(), err)
+		}
+		layers = append(layers, layerFile{Digest: layerDigest, Path: layerPath})
+	}
+
+	return pulledImage{
+		Config: imageRuntimeConfig{
+			Entrypoint:   cloneStrings(cfgBlob.Config.Entrypoint),
+			Cmd:          cloneStrings(cfgBlob.Config.Cmd),
+			Env:          cloneStrings(cfgBlob.Config.Env),
+			WorkingDir:   cfgBlob.Config.WorkingDir,
+			User:         cfgBlob.Config.User,
+			ExposedPorts: clonePorts(cfgBlob.Config.ExposedPorts),
+		},
+		Layers: layers,
+	}, nil
+}
+
+func readCachedImage(cacheDir string) (pulledImage, error) {
+	manifestPath := filepath.Join(cacheDir, "manifest.json")
+	configPath := filepath.Join(cacheDir, "config.json")
+
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return pulledImage{}, fmt.Errorf("read cached manifest: %w", err)
+	}
+	parsedManifest, err := parseImageManifest(manifestBytes)
+	if err != nil {
+		return pulledImage{}, err
+	}
+
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return pulledImage{}, fmt.Errorf("read cached config: %w", err)
+	}
+	var cfgBlob configBlob
+	if err := json.Unmarshal(configBytes, &cfgBlob); err != nil {
+		return pulledImage{}, fmt.Errorf("decode cached config blob: %w", err)
+	}
+
+	layers := make([]layerFile, 0, len(parsedManifest.Layers))
+	for idx, layer := range parsedManifest.Layers {
+		layerDigest, err := parseDigest(layer.Digest)
+		if err != nil {
+			return pulledImage{}, fmt.Errorf("invalid cached layer digest at index %d: %w", idx, err)
+		}
+		layerPath := cachedLayerPath(cacheDir, layerDigest)
+		if _, err := os.Stat(layerPath); err != nil {
+			return pulledImage{}, fmt.Errorf("cached layer missing for digest %s: %w", layerDigest.String(), err)
+		}
+		layers = append(layers, layerFile{Digest: layerDigest, Path: layerPath})
+	}
+
+	return pulledImage{
+		Config: imageRuntimeConfig{
+			Entrypoint:   cloneStrings(cfgBlob.Config.Entrypoint),
+			Cmd:          cloneStrings(cfgBlob.Config.Cmd),
+			Env:          cloneStrings(cfgBlob.Config.Env),
+			WorkingDir:   cfgBlob.Config.WorkingDir,
+			User:         cfgBlob.Config.User,
+			ExposedPorts: clonePorts(cfgBlob.Config.ExposedPorts),
+		},
+		Layers: layers,
+	}, nil
+}
+
+func normalizedDockerReference(image string) string {
+	trimmed := strings.TrimSpace(image)
+	trimmed = strings.TrimPrefix(trimmed, "docker://")
+	if strings.HasPrefix(trimmed, "//") {
+		return trimmed
+	}
+	return "//" + trimmed
+}
+
+func resolveSingleManifest(ctx context.Context, src types.ImageSource) ([]byte, string, error) {
+	manifestBytes, manifestMIME, err := src.GetManifest(ctx, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("read image manifest: %w", err)
+	}
+
+	for depth := 0; depth < 4; depth++ {
+		list, isList := parseManifestList(manifestBytes)
+		if !isList {
+			return manifestBytes, manifestMIME, nil
+		}
+		if len(list.Manifests) == 0 {
+			return nil, "", errors.New("image manifest list is empty")
+		}
+
+		descriptor, err := selectManifestDescriptor(list.Manifests)
+		if err != nil {
+			return nil, "", err
+		}
+		instanceDigest, err := parseDigest(descriptor.Digest)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid selected manifest digest: %w", err)
+		}
+
+		manifestBytes, manifestMIME, err = src.GetManifest(ctx, &instanceDigest)
+		if err != nil {
+			return nil, "", fmt.Errorf("read selected image manifest %s: %w", instanceDigest.String(), err)
+		}
+	}
+
+	return nil, "", errors.New("manifest list nesting is too deep")
+}
+
+func parseManifestList(manifestBytes []byte) (manifestList, bool) {
+	var list manifestList
+	if err := json.Unmarshal(manifestBytes, &list); err != nil {
+		return manifestList{}, false
+	}
+	if len(list.Manifests) == 0 {
+		return manifestList{}, false
+	}
+	return list, true
+}
+
+func parseImageManifest(manifestBytes []byte) (imageManifest, error) {
+	if list, ok := parseManifestList(manifestBytes); ok {
+		return imageManifest{}, fmt.Errorf("resolved manifest is still an index/list (%d manifests)", len(list.Manifests))
+	}
+
+	var m imageManifest
+	if err := json.Unmarshal(manifestBytes, &m); err != nil {
+		return imageManifest{}, fmt.Errorf("decode image manifest: %w", err)
+	}
+	if len(m.Layers) == 0 {
+		return imageManifest{}, errors.New("image manifest contains no layers")
+	}
+	if strings.TrimSpace(m.Config.Digest) == "" {
+		return imageManifest{}, errors.New("image manifest config digest is empty")
+	}
+	return m, nil
+}
+
+func selectManifestDescriptor(manifests []manifestDescriptor) (manifestDescriptor, error) {
+	if len(manifests) == 0 {
+		return manifestDescriptor{}, errors.New("manifest list has no entries")
+	}
+
+	targetOS := runtime.GOOS
+	targetArch := runtime.GOARCH
+
+	for _, d := range manifests {
+		if d.Platform == nil {
+			continue
+		}
+		if strings.EqualFold(d.Platform.OS, targetOS) && strings.EqualFold(d.Platform.Architecture, targetArch) {
+			return d, nil
+		}
+	}
+
+	for _, d := range manifests {
+		if d.Platform == nil {
+			return d, nil
+		}
+	}
+
+	return manifests[0], nil
+}
+
+func downloadBlobToBytes(ctx context.Context, src types.ImageSource, info types.BlobInfo) ([]byte, error) {
+	reader, _, err := src.GetBlob(ctx, info, none.NoCache)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := verifyDigest(info.Digest, payload); err != nil {
+		return nil, err
+	}
+
+	return payload, nil
+}
+
+func downloadBlobToFile(ctx context.Context, src types.ImageSource, info types.BlobInfo, targetPath string) error {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return fmt.Errorf("create blob dir: %w", err)
+	}
+
+	reader, _, err := src.GetBlob(ctx, info, none.NoCache)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	file, err := os.Create(targetPath)
+	if err != nil {
+		return fmt.Errorf("create blob file %s: %w", targetPath, err)
+	}
+	defer file.Close()
+
+	digester := info.Digest.Algorithm().Digester()
+	writer := io.MultiWriter(file, digester.Hash())
+	if _, err := io.Copy(writer, reader); err != nil {
+		return fmt.Errorf("write blob file %s: %w", targetPath, err)
+	}
+
+	if got := digester.Digest(); got != info.Digest {
+		return fmt.Errorf("blob digest mismatch for %s: expected %s, got %s", targetPath, info.Digest.String(), got.String())
+	}
+	return nil
+}
+
+func verifyDigest(expected digest.Digest, payload []byte) error {
+	if expected == "" {
+		return nil
+	}
+	if err := expected.Validate(); err != nil {
+		return fmt.Errorf("invalid digest %q: %w", expected.String(), err)
+	}
+	got := expected.Algorithm().FromBytes(payload)
+	if got != expected {
+		return fmt.Errorf("blob digest mismatch: expected %s, got %s", expected.String(), got.String())
+	}
+	return nil
+}
+
+func parseDigest(raw string) (digest.Digest, error) {
+	d, err := digest.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	if err := d.Validate(); err != nil {
+		return "", err
+	}
+	return d, nil
+}
+
+func cachedLayerPath(cacheDir string, d digest.Digest) string {
+	return filepath.Join(cacheDir, "layers", d.Algorithm().String(), d.Encoded()+".blob")
+}
+
+func applyLayers(layers []layerFile, rootfsDir string) error {
+	if len(layers) == 0 {
+		return errors.New("pulled image contains no layers")
+	}
+
+	for idx, layer := range layers {
+		layerFileHandle, err := os.Open(layer.Path)
+		if err != nil {
+			return fmt.Errorf("open cached layer %s: %w", layer.Path, err)
+		}
+
+		_, applyErr := storagearchive.ApplyLayer(rootfsDir, layerFileHandle)
+		closeErr := layerFileHandle.Close()
+		if applyErr != nil {
+			return fmt.Errorf("apply layer %d (%s): %w", idx, layer.Digest.String(), applyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close cached layer %s: %w", layer.Path, closeErr)
+		}
+	}
+	return nil
 }
 
 func composeStartCommand(entrypoint, cmd []string) []string {
@@ -336,123 +699,6 @@ func composeStartCommand(entrypoint, cmd []string) []string {
 		return []string{"/bin/sh"}
 	}
 	return joined
-}
-
-func createContainer(ctx context.Context, image string) (string, error) {
-	out, err := runCommand(ctx, "docker", "create", image)
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(string(out))
-	if id == "" {
-		return "", errors.New("docker create returned empty container id")
-	}
-	return id, nil
-}
-
-func exportContainerFS(ctx context.Context, containerID, rootfsDir string) error {
-	cmd := exec.CommandContext(ctx, "docker", "export", containerID)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("docker export stdout pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start docker export: %w", err)
-	}
-
-	extractErr := extractTarStream(stdout, rootfsDir)
-	waitErr := cmd.Wait()
-	if extractErr != nil {
-		return extractErr
-	}
-	if waitErr != nil {
-		stderrText := strings.TrimSpace(stderr.String())
-		if stderrText != "" {
-			return fmt.Errorf("docker export %s failed: %w: %s", containerID, waitErr, stderrText)
-		}
-		return fmt.Errorf("docker export %s failed: %w", containerID, waitErr)
-	}
-	return nil
-}
-
-func extractTarStream(reader io.Reader, dest string) error {
-	tr := tar.NewReader(reader)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read tar stream: %w", err)
-		}
-
-		targetPath, err := secureJoin(dest, hdr.Name)
-		if err != nil {
-			return err
-		}
-
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(targetPath, fs.FileMode(hdr.Mode)); err != nil {
-				return fmt.Errorf("create dir %s: %w", targetPath, err)
-			}
-		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return fmt.Errorf("create parent dir for %s: %w", targetPath, err)
-			}
-			file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode))
-			if err != nil {
-				return fmt.Errorf("create file %s: %w", targetPath, err)
-			}
-			if _, err := io.Copy(file, tr); err != nil {
-				_ = file.Close()
-				return fmt.Errorf("write file %s: %w", targetPath, err)
-			}
-			if err := file.Close(); err != nil {
-				return fmt.Errorf("close file %s: %w", targetPath, err)
-			}
-		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return fmt.Errorf("create parent dir for symlink %s: %w", targetPath, err)
-			}
-			_ = os.Remove(targetPath)
-			if err := os.Symlink(hdr.Linkname, targetPath); err != nil {
-				return fmt.Errorf("create symlink %s -> %s: %w", targetPath, hdr.Linkname, err)
-			}
-		case tar.TypeLink:
-			linkTarget, err := secureJoin(dest, hdr.Linkname)
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return fmt.Errorf("create parent dir for hardlink %s: %w", targetPath, err)
-			}
-			_ = os.Remove(targetPath)
-			if err := os.Link(linkTarget, targetPath); err != nil {
-				return fmt.Errorf("create hardlink %s -> %s: %w", targetPath, linkTarget, err)
-			}
-		default:
-			// Skip device/special files while keeping extraction resilient on non-root hosts.
-		}
-	}
-}
-
-func secureJoin(base, rel string) (string, error) {
-	clean := filepath.Clean(rel)
-	if clean == "." {
-		return base, nil
-	}
-	if filepath.IsAbs(clean) {
-		clean = strings.TrimPrefix(clean, string(filepath.Separator))
-	}
-	target := filepath.Join(base, clean)
-	if !strings.HasPrefix(target, filepath.Clean(base)+string(filepath.Separator)) && target != filepath.Clean(base) {
-		return "", fmt.Errorf("tar entry escapes destination: %q", rel)
-	}
-	return target, nil
 }
 
 type metadata struct {
@@ -707,5 +953,16 @@ func cloneStrings(in []string) []string {
 	}
 	out := make([]string, len(in))
 	copy(out, in)
+	return out
+}
+
+func clonePorts(in map[string]struct{}) map[string]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(in))
+	for key := range in {
+		out[key] = struct{}{}
+	}
 	return out
 }
