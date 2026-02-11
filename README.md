@@ -11,6 +11,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - `mergend`: VM lifecycle manager (control-plane)
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
+- `mergen-init-snapshot`: Go PID1 init binary for converted rootfs
 
 ## Why this project
 
@@ -59,6 +60,7 @@ Forwarder design details: `docs/forwarder-design.md`
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
 - `cmd/mergen-converter`: registry image conversion CLI
+- `cmd/mergen-init-snapshot`: in-guest init/PID1 runtime
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
@@ -175,9 +177,15 @@ Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `ini
 Place your custom init binary first:
 
 ```bash
-./scripts/build-sbin-init-from-fly.sh
+./scripts/build-sbin-init-from-go.sh
 # or place your own binary manually at:
 # ./artifacts/sbin-init/sbin-init
+```
+
+Legacy (Rust/Fly snapshot source) build script is still available:
+
+```bash
+./scripts/build-sbin-init-from-fly.sh
 ```
 
 Run converter:
@@ -190,6 +198,7 @@ go run ./cmd/mergen-converter \
 
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
 Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
+Injected `/sbin/init` is expected to be built from `cmd/mergen-init-snapshot`.
 
 Converter outputs:
 

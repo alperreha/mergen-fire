@@ -9,6 +9,10 @@ Expected default path:
 - `/sbin/init` (used by kernel boot args)
 - `/sbin/mergen-init` (preserved copy)
 
-You can build Fly.io `init-snapshot` into this path with:
+Build Go-based `mergen-init-snapshot` into this path with:
+
+- `./scripts/build-sbin-init-from-go.sh`
+
+Legacy option (Rust/Fly snapshot build):
 
 - `./scripts/build-sbin-init-from-fly.sh`
