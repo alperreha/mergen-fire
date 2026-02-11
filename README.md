@@ -10,6 +10,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - `mergend`: VM lifecycle manager (control-plane)
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
+- `mergen-converter`: Docker image -> OCI-aligned MicroVM rootfs converter
 
 ## Why this project
 
@@ -47,6 +48,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - **Control plane:** Go HTTP API server (`cmd/mergend`)
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
+- **Image conversion plane:** Docker-to-rootfs converter (`cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
 
@@ -56,9 +58,11 @@ Forwarder design details: `docs/forwarder-design.md`
 
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
+- `cmd/mergen-converter`: Docker image conversion CLI
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
+- `internal/converter`: image pull/export/rootfs/ext4 conversion pipeline
 - `internal/store`: filesystem persistence
 - `internal/systemd`: `systemctl` wrapper
 - `internal/firecracker`: VM config rendering and socket probe
@@ -76,6 +80,8 @@ Forwarder design details: `docs/forwarder-design.md`
   - `firecracker`
   - `jailer`
   - `ip` + `iptables`/`nft`
+  - `docker`
+  - `mkfs.ext4` + `truncate`
 - Go 1.24+
 
 > Note: This repo can be developed on macOS, but actual VM runtime requires a Linux host with `systemd` and Firecracker.
@@ -160,6 +166,33 @@ Custom output path/name/size:
 Script also writes image startup metadata and an `/init` wrapper that executes image `Entrypoint + Cmd`.
 Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `init=/init`.
 
+### Convert image with `mergen-converter`
+
+Place your custom init binary first:
+
+```bash
+./scripts/build-sbin-init-from-fly.sh
+# or place your own binary manually at:
+# ./artifacts/sbin-init/sbin-init
+```
+
+Run converter:
+
+```bash
+go run ./cmd/mergen-converter \
+  -image nginx:alpine \
+  -output-dir ./artifacts/converter/nginx-alpine
+```
+
+Converter outputs:
+
+- `rootfs/` extracted filesystem
+- `rootfs.tar`
+- `rootfs.ext4`
+- `image-meta.json` (entrypoint/cmd/env/startCmd metadata for init)
+- `suggested-bootargs.txt` (`init=/sbin/init`)
+- `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
+
 ### Standalone Firecracker smoke test (without mergend)
 
 After generating rootfs, validate it directly with Firecracker + API:
@@ -181,6 +214,33 @@ sudo ./scripts/test-firecracker-rootfs.sh \
 
 Script creates test netns/tap, starts Firecracker in that netns, configures VM via API socket, then opens an interactive netns shell.
 Exit the shell to trigger cleanup (or use `--keep-run-dir` to keep logs).
+
+### One-shot converted rootfs smoke test
+
+Build latest stable Linux `vmlinux`, detect converted `rootfs.ext4`, and run Firecracker directly:
+
+```bash
+sudo ./scripts/smoke-test-converted-rootfs.sh
+```
+
+What this wrapper does:
+
+- Downloads latest stable kernel source from kernel.org
+- Builds `vmlinux`
+- Writes kernel to:
+  - `./artifacts/kernels/linux-<version>/vmlinux`
+  - `/var/lib/mergen/base/vmlinux`
+- Auto-detects newest `rootfs.ext4` from:
+  - `./artifacts/converter/**/rootfs.ext4`
+  - `/var/lib/mergen/base/**/rootfs.ext4` / `/var/lib/mergen/base/rootfs.ext4`
+- Executes `scripts/test-firecracker-rootfs.sh` with `init=/sbin/init`
+
+Useful options:
+
+- `--rootfs /path/rootfs.ext4`
+- `--skip-kernel-build --kernel /var/lib/mergen/base/vmlinux`
+- `--jobs 8`
+- `-- --guest-ip 172.30.0.2 --host-ip 172.30.0.1`
 
 ### Run TLS SNI forwarder
 
