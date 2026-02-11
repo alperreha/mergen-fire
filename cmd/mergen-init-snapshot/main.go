@@ -488,11 +488,6 @@ func applyIPConfigs(ifaceName string, cfgs []flyIPConfig) error {
 		}
 		if gw != nil {
 			route := &netlink.Route{LinkIndex: link.Attrs().Index, Gw: gw}
-			if gw.To4() == nil {
-				route.Family = netlink.FAMILY_V6
-			} else {
-				route.Family = netlink.FAMILY_V4
-			}
 			if err := netlink.RouteAdd(route); err != nil && !errors.Is(err, syscall.EEXIST) {
 				return fmt.Errorf("add default route via %s: %w", gw.String(), err)
 			}
