@@ -16,10 +16,12 @@ func TestRenderVMConfig_Defaults(t *testing.T) {
 	meta := model.VMMetadata{
 		ID:      "6f008233-68f7-47b8-b2d1-6a9f0632b30b",
 		TapName: "tap-6f008233",
+		GuestIP: "172.30.0.2",
 	}
 
 	cfg := RenderVMConfig(req, meta)
-	if cfg.BootSource.BootArgs != defaultBootArgs {
+	expectedBootArgs := "console=ttyS0 reboot=k panic=1 pci=off ip=172.30.0.2::172.30.0.1:255.255.255.0::eth0:off"
+	if cfg.BootSource.BootArgs != expectedBootArgs {
 		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
 	}
 	if cfg.BootSource.KernelImagePath != req.Kernel {
@@ -36,5 +38,44 @@ func TestRenderVMConfig_Defaults(t *testing.T) {
 	}
 	if cfg.NetworkInterfaces[0].HostDevName != meta.TapName {
 		t.Fatalf("tap mismatch")
+	}
+}
+
+func TestRenderVMConfig_DoesNotDuplicateExistingBootArgs(t *testing.T) {
+	req := model.CreateVMRequest{
+		RootFS:   "/var/lib/mergen/vm1/rootfs.ext4",
+		Kernel:   "/var/lib/mergen/vm1/vmlinux",
+		VCPU:     1,
+		MemMiB:   512,
+		BootArgs: "console=ttyS0 init=/init ip=10.0.0.2::10.0.0.1:255.255.255.0::eth0:off",
+	}
+	meta := model.VMMetadata{
+		ID:      "6f008233-68f7-47b8-b2d1-6a9f0632b30b",
+		TapName: "tap-6f008233",
+		GuestIP: "172.30.0.2",
+	}
+
+	cfg := RenderVMConfig(req, meta)
+	expectedBootArgs := "console=ttyS0 init=/init ip=10.0.0.2::10.0.0.1:255.255.255.0::eth0:off"
+	if cfg.BootSource.BootArgs != expectedBootArgs {
+		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
+	}
+}
+
+func TestRenderVMConfig_NoGuestIPKeepsDefaultBootArgs(t *testing.T) {
+	req := model.CreateVMRequest{
+		RootFS: "/var/lib/mergen/vm1/rootfs.ext4",
+		Kernel: "/var/lib/mergen/vm1/vmlinux",
+		VCPU:   1,
+		MemMiB: 512,
+	}
+	meta := model.VMMetadata{
+		ID:      "6f008233-68f7-47b8-b2d1-6a9f0632b30b",
+		TapName: "tap-6f008233",
+	}
+
+	cfg := RenderVMConfig(req, meta)
+	if cfg.BootSource.BootArgs != defaultBootArgs {
+		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
 	}
 }

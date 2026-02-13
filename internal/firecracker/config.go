@@ -1,6 +1,8 @@
 package firecracker
 
 import (
+	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/alperreha/mergen-fire/internal/model"
@@ -8,12 +10,13 @@ import (
 )
 
 const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off"
+const (
+	defaultGuestMask   = "255.255.255.0"
+	defaultGuestIfName = "eth0"
+)
 
 func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMConfig {
-	bootArgs := strings.TrimSpace(req.BootArgs)
-	if bootArgs == "" {
-		bootArgs = defaultBootArgs
-	}
+	bootArgs := resolvedBootArgs(req.BootArgs, meta.GuestIP)
 
 	drives := []model.Drive{
 		{
@@ -52,4 +55,43 @@ func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMCo
 			},
 		},
 	}
+}
+
+func resolvedBootArgs(requested, guestIP string) string {
+	bootArgs := strings.TrimSpace(requested)
+	if bootArgs == "" {
+		bootArgs = defaultBootArgs
+	}
+
+	if !hasKernelArgWithPrefix(bootArgs, "ip=") {
+		if kernelIPArg, ok := buildKernelIPArg(guestIP); ok {
+			bootArgs += " " + kernelIPArg
+		}
+	}
+
+	return strings.Join(strings.Fields(bootArgs), " ")
+}
+
+func hasKernelArgWithPrefix(bootArgs, prefix string) bool {
+	for _, arg := range strings.Fields(bootArgs) {
+		if strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildKernelIPArg(guestIP string) (string, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(guestIP))
+	if err != nil || !addr.Is4() {
+		return "", false
+	}
+
+	octets := addr.As4()
+	gatewayLast := byte(1)
+	if octets[3] == gatewayLast {
+		gatewayLast = 2
+	}
+	gateway := fmt.Sprintf("%d.%d.%d.%d", octets[0], octets[1], octets[2], gatewayLast)
+	return fmt.Sprintf("ip=%s::%s:%s::%s:off", addr.String(), gateway, defaultGuestMask, defaultGuestIfName), true
 }

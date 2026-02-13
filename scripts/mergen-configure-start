@@ -55,6 +55,58 @@ api_call() {
   rm -f "${out_file}"
 }
 
+derive_host_ip_from_guest() {
+  local guest_ip="${1:-}"
+  if [[ "${guest_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    IFS='.' read -r o1 o2 o3 o4 <<<"${guest_ip}"
+    local last=1
+    if [[ "${o4}" == "1" ]]; then
+      last=2
+    fi
+    echo "${o1}.${o2}.${o3}.${last}"
+    return 0
+  fi
+  return 1
+}
+
+augment_boot_source_ip_arg() {
+  local boot_source_json="${1}"
+  local guest_ip="${MGN_GUEST_IP:-}"
+  if [[ -z "${guest_ip}" ]]; then
+    echo "${boot_source_json}"
+    return 0
+  fi
+
+  local boot_args
+  boot_args="$(echo "${boot_source_json}" | jq -r '.boot_args // ""')"
+  if echo "${boot_args}" | tr ' ' '\n' | grep -Eq '^ip='; then
+    echo "${boot_source_json}"
+    return 0
+  fi
+
+  local host_ip="${MGN_HOST_IP:-}"
+  if [[ -z "${host_ip}" ]]; then
+    host_ip="$(derive_host_ip_from_guest "${guest_ip}" || true)"
+  fi
+  if [[ -z "${host_ip}" ]]; then
+    echo "${boot_source_json}"
+    return 0
+  fi
+
+  local guest_mask="${MGN_GUEST_NETMASK:-255.255.255.0}"
+  local guest_iface="${MGN_GUEST_IFACE:-eth0}"
+  local kernel_ip_arg="ip=${guest_ip}::${host_ip}:${guest_mask}::${guest_iface}:off"
+
+  if [[ -n "${boot_args}" ]]; then
+    boot_args="${boot_args} ${kernel_ip_arg}"
+  else
+    boot_args="${kernel_ip_arg}"
+  fi
+  boot_args="$(echo "${boot_args}" | awk '{$1=$1; print}')"
+
+  echo "${boot_source_json}" | jq -c --arg boot_args "${boot_args}" '.boot_args = $boot_args'
+}
+
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 while [[ ! -S "${SOCKET_PATH}" ]]; do
   if [[ ${SECONDS} -ge ${deadline} ]]; then
@@ -74,6 +126,7 @@ if [[ -z "${BOOT_SOURCE}" || "${BOOT_SOURCE}" == "null" ]]; then
   echo "boot-source missing in ${VM_JSON}" >&2
   exit 1
 fi
+BOOT_SOURCE="$(augment_boot_source_ip_arg "${BOOT_SOURCE}")"
 
 api_call PUT "/machine-config" "${MACHINE_CONFIG}"
 api_call PUT "/boot-source" "${BOOT_SOURCE}"

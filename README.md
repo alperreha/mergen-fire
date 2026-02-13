@@ -170,7 +170,9 @@ Custom output path/name/size:
 ```
 
 Script also writes image startup metadata and an `/init` wrapper that executes image `Entrypoint + Cmd`.
-Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `init=/init`.
+Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `init=/init` for this script output.
+`mergend` now auto-appends kernel `ip=...` boot arg when VM has `guestIP` and request boot args do not include an `ip=` value.
+`scripts/mergen-configure-start` also adds this as a runtime fallback for older `vm.json` files that were created before this behavior.
 
 ### Convert image with `mergen-converter`
 
