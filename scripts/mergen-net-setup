@@ -18,15 +18,37 @@ if [[ ! -f "${VM_DIR}/meta.json" ]]; then
   exit 1
 fi
 
-# Create named netns for forwarder setns dial path (/run/netns/<name>).
 if ! command -v ip >/dev/null 2>&1; then
   echo "ip command not found in PATH" >&2
   exit 1
 fi
 
 NETNS_NAME="${MGN_NETNS:-${FC_NETNS:-mergen-${VM_ID:0:8}}}"
+TAP_NAME="${MGN_TAP_NAME:-tap-${VM_ID:0:8}}"
+GUEST_IP="${MGN_GUEST_IP:-}"
+HOST_PREFIX="${MGN_HOST_PREFIX:-24}"
+HOST_IP="${MGN_HOST_IP:-}"
+
 if ! ip netns list | awk '{print $1}' | grep -Fxq "${NETNS_NAME}"; then
   ip netns add "${NETNS_NAME}"
+fi
+
+ip -n "${NETNS_NAME}" link set lo up || true
+
+if ! ip -n "${NETNS_NAME}" link show "${TAP_NAME}" >/dev/null 2>&1; then
+  ip -n "${NETNS_NAME}" tuntap add dev "${TAP_NAME}" mode tap
+fi
+ip -n "${NETNS_NAME}" link set "${TAP_NAME}" up
+
+if [[ -z "${HOST_IP}" && -n "${GUEST_IP}" && "${GUEST_IP}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  IFS='.' read -r o1 o2 o3 _ <<<"${GUEST_IP}"
+  HOST_IP="${o1}.${o2}.${o3}.1"
+fi
+
+if [[ -n "${HOST_IP}" ]]; then
+  if ! ip -n "${NETNS_NAME}" -o addr show dev "${TAP_NAME}" | awk '{print $4}' | grep -Fxq "${HOST_IP}/${HOST_PREFIX}"; then
+    ip -n "${NETNS_NAME}" addr add "${HOST_IP}/${HOST_PREFIX}" dev "${TAP_NAME}" || true
+  fi
 fi
 
 exit 0

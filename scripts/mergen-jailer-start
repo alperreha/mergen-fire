@@ -10,13 +10,27 @@ if [[ -f "${VM_DIR}/env" ]]; then
   source "${VM_DIR}/env"
 fi
 
-mkdir -p "${RUN_DIR}"
+SOCKET_PATH="${MGN_SOCKET_PATH:-${RUN_DIR}/mergen.socket}"
+NETNS_NAME="${MGN_NETNS:-}"
+FIRECRACKER_BIN="${MGN_FIRECRACKER_BIN:-${FIRECRACKER_BIN:-firecracker}}"
 
-# Placeholder start command:
-# In production this should invoke jailer and firecracker binary.
-if [[ -n "${MGN_SOCKET_PATH:-}" ]]; then
-  : > "${MGN_SOCKET_PATH}.placeholder"
+mkdir -p "${RUN_DIR}"
+rm -f "${SOCKET_PATH}"
+
+if ! command -v "${FIRECRACKER_BIN}" >/dev/null 2>&1; then
+  echo "firecracker binary not found: ${FIRECRACKER_BIN}" >&2
+  exit 1
 fi
 
-echo "mergen placeholder started for ${VM_ID}"
-sleep infinity
+FC_CMD=("${FIRECRACKER_BIN}" "--api-sock" "${SOCKET_PATH}")
+
+if [[ -n "${NETNS_NAME}" ]] && command -v ip >/dev/null 2>&1; then
+  if ip netns list | awk '{print $1}' | grep -Fxq "${NETNS_NAME}"; then
+    echo "starting firecracker in netns=${NETNS_NAME} socket=${SOCKET_PATH}" >&2
+    exec ip netns exec "${NETNS_NAME}" "${FC_CMD[@]}"
+  fi
+  echo "netns not found, starting firecracker in host netns: ${NETNS_NAME}" >&2
+fi
+
+echo "starting firecracker in host netns socket=${SOCKET_PATH}" >&2
+exec "${FC_CMD[@]}"

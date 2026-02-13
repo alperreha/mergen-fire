@@ -379,7 +379,7 @@ This SNI rule applies to HTTPS listener routing.
   - `scripts/mergen-graceful-stop`
   - `scripts/mergen-net-cleanup`
 
-Current scripts are deterministic stubs to define boundaries. Replace with host-specific networking and jailer commands for production.
+`mergen-jailer-start` and `mergen-configure-start` now run real Firecracker API flow (socket + config + InstanceStart). Networking scripts are still minimal and should be hardened for production (NAT/filtering/policy).
 
 ## Firecracker SDK note
 
