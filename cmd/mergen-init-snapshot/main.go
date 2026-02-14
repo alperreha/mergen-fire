@@ -141,6 +141,15 @@ type startSpec struct {
 }
 
 func loadStartSpec() (startSpec, string, error) {
+	metaPath := resolveMetaPath(defaultMetaPath)
+	if fileExists(metaPath) {
+		meta, err := loadImageMeta(metaPath)
+		if err != nil {
+			return startSpec{}, "", fmt.Errorf("read metadata %s: %w", metaPath, err)
+		}
+		return buildSpecFromMeta(meta), metaPath, nil
+	}
+
 	if fileExists(defaultFlyRunPath) {
 		cfg, err := loadFlyRunConfig(defaultFlyRunPath)
 		if err != nil {
@@ -150,12 +159,7 @@ func loadStartSpec() (startSpec, string, error) {
 		return spec, defaultFlyRunPath, nil
 	}
 
-	metaPath := resolveMetaPath(defaultMetaPath)
-	meta, err := loadImageMeta(metaPath)
-	if err != nil {
-		return startSpec{}, "", fmt.Errorf("read metadata %s: %w", metaPath, err)
-	}
-	return buildSpecFromMeta(meta), metaPath, nil
+	return startSpec{}, "", fmt.Errorf("no startup metadata found at %s or %s", metaPath, defaultFlyRunPath)
 }
 
 func loadImageMeta(path string) (imageMeta, error) {
@@ -576,28 +580,13 @@ func runAndSupervise(spec startSpec, logger *slog.Logger) (int, error) {
 		spec.Argv = []string{"/bin/sh"}
 	}
 
-	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.Env = envMapToList(spec.Env)
-	if spec.WorkingDir != "" {
-		cmd.Dir = spec.WorkingDir
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-		Credential: &syscall.Credential{
-			Uid: uid,
-			Gid: gid,
-		},
-	}
-
-	if err := cmd.Start(); err != nil {
-		return 1, fmt.Errorf("start command %q: %w", strings.Join(spec.Argv, " "), err)
+	cmd, startedArgv, err := startMainProcess(spec, uid, gid, logger)
+	if err != nil {
+		return 1, err
 	}
 
 	mainPID := cmd.Process.Pid
-	logger.Info("started main process", "pid", mainPID)
+	logger.Info("started main process", "pid", mainPID, "argv", strings.Join(startedArgv, " "))
 
 	sigCh := make(chan os.Signal, 64)
 	signal.Notify(
@@ -645,6 +634,92 @@ func runAndSupervise(spec startSpec, logger *slog.Logger) (int, error) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func startMainProcess(spec startSpec, uid, gid uint32, logger *slog.Logger) (*exec.Cmd, []string, error) {
+	envList := envMapToList(spec.Env)
+	candidates := commandCandidates(spec.Argv)
+	var lastErr error
+
+	for idx, argv := range candidates {
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		cmd.Env = envList
+		if spec.WorkingDir != "" {
+			cmd.Dir = spec.WorkingDir
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+			Credential: &syscall.Credential{
+				Uid: uid,
+				Gid: gid,
+			},
+		}
+
+		if err := cmd.Start(); err != nil {
+			lastErr = err
+			logger.Warn("start command attempt failed", "attempt", idx+1, "argv", strings.Join(argv, " "), "error", err)
+			continue
+		}
+		return cmd, argv, nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("no command candidates")
+	}
+	return nil, nil, fmt.Errorf("start command %q: %w", strings.Join(spec.Argv, " "), lastErr)
+}
+
+func commandCandidates(argv []string) [][]string {
+	if len(argv) == 0 {
+		argv = []string{"/bin/sh"}
+	}
+
+	out := make([][]string, 0, 2)
+	primary := cloneSlice(argv)
+	out = append(out, primary)
+
+	shellLine := shellCommandLine(primary)
+	if shellLine == "" {
+		return out
+	}
+	fallback := []string{"/bin/sh", "-lc", shellLine}
+	if !equalStringSlices(primary, fallback) {
+		out = append(out, fallback)
+	}
+	return out
+}
+
+func shellCommandLine(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuote(raw string) string {
+	if raw == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(raw, "'", `'"'"'`) + "'"
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveUser(spec string) (uid uint32, gid uint32, home string, err error) {

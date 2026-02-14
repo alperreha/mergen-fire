@@ -55,3 +55,27 @@ func TestBuildSpecFromMetaStartCmdPriority(t *testing.T) {
 		t.Fatalf("unexpected argv: %#v", spec.Argv)
 	}
 }
+
+func TestCommandCandidatesAddsShellFallback(t *testing.T) {
+	candidates := commandCandidates([]string{"nginx -g daemon off;"})
+	if len(candidates) != 2 {
+		t.Fatalf("len(candidates) = %d, want 2", len(candidates))
+	}
+	if len(candidates[0]) != 1 || candidates[0][0] != "nginx -g daemon off;" {
+		t.Fatalf("unexpected primary candidate: %#v", candidates[0])
+	}
+	if len(candidates[1]) != 3 || candidates[1][0] != "/bin/sh" || candidates[1][1] != "-lc" {
+		t.Fatalf("unexpected fallback candidate prefix: %#v", candidates[1])
+	}
+	if candidates[1][2] != "'nginx -g daemon off;'" {
+		t.Fatalf("unexpected fallback command line: %q", candidates[1][2])
+	}
+}
+
+func TestShellQuoteEscapesSingleQuote(t *testing.T) {
+	got := shellQuote("echo 'hello'")
+	want := "'echo '\"'\"'hello'\"'\"''"
+	if got != want {
+		t.Fatalf("shellQuote mismatch: got %q want %q", got, want)
+	}
+}
