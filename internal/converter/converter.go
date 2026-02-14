@@ -749,13 +749,32 @@ func injectSbinInit(hostPath, rootfsDir string) error {
 		return fmt.Errorf("create /sbin dir: %w", err)
 	}
 	targetSbinInit := filepath.Join(targetSbinDir, "init")
-	if err := os.WriteFile(targetSbinInit, content, 0o755); err != nil {
+	if err := writeExecutableFileReplacingSymlink(targetSbinInit, content); err != nil {
 		return fmt.Errorf("write /sbin/init: %w", err)
 	}
 
 	targetSbinCopy := filepath.Join(targetSbinDir, "mergen-init")
-	if err := os.WriteFile(targetSbinCopy, content, 0o755); err != nil {
+	if err := writeExecutableFileReplacingSymlink(targetSbinCopy, content); err != nil {
 		return fmt.Errorf("write /sbin/mergen-init: %w", err)
+	}
+	return nil
+}
+
+func writeExecutableFileReplacingSymlink(path string, content []byte) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		// Do not follow existing symlink targets (for example Alpine /sbin/init -> /bin/busybox).
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+
+	if err := os.WriteFile(path, content, 0o755); err != nil {
+		return err
 	}
 	return nil
 }

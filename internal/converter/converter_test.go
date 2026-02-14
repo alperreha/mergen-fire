@@ -1,6 +1,10 @@
 package converter
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSanitizeName(t *testing.T) {
 	cases := []struct {
@@ -66,5 +70,69 @@ func TestInferHTTPPort(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("%s: got %d, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestInjectSbinInitReplacesSymlinkWithoutTouchingTarget(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	rootfsDir := filepath.Join(tmpDir, "rootfs")
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "sbin"), 0o755); err != nil {
+		t.Fatalf("prepare /sbin: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootfsDir, "bin"), 0o755); err != nil {
+		t.Fatalf("prepare /bin: %v", err)
+	}
+
+	busyboxPath := filepath.Join(rootfsDir, "bin", "busybox")
+	const busyboxOriginal = "busybox-original"
+	if err := os.WriteFile(busyboxPath, []byte(busyboxOriginal), 0o755); err != nil {
+		t.Fatalf("write busybox: %v", err)
+	}
+	if err := os.Symlink("../bin/busybox", filepath.Join(rootfsDir, "sbin", "init")); err != nil {
+		t.Fatalf("symlink /sbin/init -> /bin/busybox: %v", err)
+	}
+
+	hostInitPath := filepath.Join(tmpDir, "sbin-init")
+	const initBinary = "init-binary-content"
+	if err := os.WriteFile(hostInitPath, []byte(initBinary), 0o755); err != nil {
+		t.Fatalf("write host sbin-init: %v", err)
+	}
+
+	if err := injectSbinInit(hostInitPath, rootfsDir); err != nil {
+		t.Fatalf("injectSbinInit failed: %v", err)
+	}
+
+	busyboxAfter, err := os.ReadFile(busyboxPath)
+	if err != nil {
+		t.Fatalf("read busybox after inject: %v", err)
+	}
+	if string(busyboxAfter) != busyboxOriginal {
+		t.Fatalf("busybox content changed: got %q want %q", string(busyboxAfter), busyboxOriginal)
+	}
+
+	initInfo, err := os.Lstat(filepath.Join(rootfsDir, "sbin", "init"))
+	if err != nil {
+		t.Fatalf("lstat /sbin/init: %v", err)
+	}
+	if initInfo.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("/sbin/init should be regular file, got symlink")
+	}
+
+	initAfter, err := os.ReadFile(filepath.Join(rootfsDir, "sbin", "init"))
+	if err != nil {
+		t.Fatalf("read /sbin/init: %v", err)
+	}
+	if string(initAfter) != initBinary {
+		t.Fatalf("/sbin/init content mismatch: got %q want %q", string(initAfter), initBinary)
+	}
+
+	copyAfter, err := os.ReadFile(filepath.Join(rootfsDir, "sbin", "mergen-init"))
+	if err != nil {
+		t.Fatalf("read /sbin/mergen-init: %v", err)
+	}
+	if string(copyAfter) != initBinary {
+		t.Fatalf("/sbin/mergen-init content mismatch: got %q want %q", string(copyAfter), initBinary)
 	}
 }
