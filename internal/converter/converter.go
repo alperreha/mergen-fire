@@ -29,17 +29,30 @@ import (
 const (
 	defaultOutputBase     = "/var/lib/mergen/images"
 	defaultSbinInitPath   = "./artifacts/sbin-init/sbin-init"
-	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init mergen.meta=/etc/mergen/image-meta.json"
+	defaultTelemetryPath  = "./artifacts/sbin-init/mergen-telemetry"
+	defaultSupervisorPath = "./artifacts/sbin-init/mergen-supervisor"
+	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
 	defaultRootFSOverhead = 256
+	defaultGoldenOverhead = 64
+	defaultEnvOverhead    = 16
+	defaultGoldenSizeMiB  = 128
+	defaultEnvSizeMiB     = 32
+	defaultEnvLine        = "Mergen=is super"
 )
 
 type Options struct {
-	Image        string
-	OutputDir    string
-	Name         string
-	SizeMiB      int
-	SkipPull     bool
-	SbinInitPath string
+	Image          string
+	OutputDir      string
+	Name           string
+	SizeMiB        int
+	SkipPull       bool
+	SbinInitPath   string
+	TelemetryPath  string
+	SupervisorPath string
+	GoldenRootFS   string
+	GoldenSizeMiB  int
+	EnvSizeMiB     int
+	EnvLine        string
 }
 
 type DeleteOptions struct {
@@ -54,6 +67,13 @@ type Result struct {
 	RootFSDir             string
 	RootFSTarPath         string
 	RootFSExt4Path        string
+	PayloadRootFSDir      string
+	PayloadRootFSTarPath  string
+	PayloadRootFSExt4Path string
+	EnvRootFSDir          string
+	EnvRootFSExt4Path     string
+	RuntimePath           string
+	EnvFilePath           string
 	MetadataPath          string
 	SuggestedBootArgsPath string
 	SuggestedVMPath       string
@@ -93,6 +113,17 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	if err := ensureReadableFile(normalized.SbinInitPath); err != nil {
 		return Result{}, err
 	}
+	if err := ensureReadableFile(normalized.TelemetryPath); err != nil {
+		return Result{}, err
+	}
+	if err := ensureReadableFile(normalized.SupervisorPath); err != nil {
+		return Result{}, err
+	}
+	if normalized.GoldenRootFS != "" {
+		if err := ensureReadableDir(normalized.GoldenRootFS); err != nil {
+			return Result{}, err
+		}
+	}
 
 	r.logger.Info(
 		"converter started",
@@ -105,12 +136,17 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
 
-	rootfsDir := filepath.Join(normalized.OutputDir, "rootfs")
-	if err := os.RemoveAll(rootfsDir); err != nil {
-		return Result{}, fmt.Errorf("clean rootfs dir: %w", err)
+	payloadRootFSDir := filepath.Join(normalized.OutputDir, "payload-rootfs")
+	goldenRootFSDir := filepath.Join(normalized.OutputDir, "golden-rootfs")
+	envRootFSDir := filepath.Join(normalized.OutputDir, "env-rootfs")
+	if err := resetDir(payloadRootFSDir); err != nil {
+		return Result{}, fmt.Errorf("prepare payload rootfs dir: %w", err)
 	}
-	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
-		return Result{}, fmt.Errorf("create rootfs dir: %w", err)
+	if err := resetDir(goldenRootFSDir); err != nil {
+		return Result{}, fmt.Errorf("prepare golden rootfs dir: %w", err)
+	}
+	if err := resetDir(envRootFSDir); err != nil {
+		return Result{}, fmt.Errorf("prepare env rootfs dir: %w", err)
 	}
 
 	cacheDir := filepath.Join(normalized.OutputDir, "image-cache")
@@ -132,7 +168,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	startCmd := composeStartCommand(pulled.Config.Entrypoint, pulled.Config.Cmd)
 	suggestedHTTPPort := inferHTTPPort(pulled.Config.ExposedPorts)
 
-	if err := applyLayers(pulled.Layers, rootfsDir); err != nil {
+	if err := applyLayers(pulled.Layers, payloadRootFSDir); err != nil {
 		return Result{}, err
 	}
 
@@ -149,33 +185,89 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		SuggestedHTTPPort: suggestedHTTPPort,
 	}
 
-	if err := injectSbinInit(normalized.SbinInitPath, rootfsDir); err != nil {
+	if err := writeMetadataFiles(payloadRootFSDir, normalized.OutputDir, imageMeta); err != nil {
 		return Result{}, err
 	}
 
-	if err := writeMetadataFiles(rootfsDir, normalized.OutputDir, imageMeta); err != nil {
+	runtimeMeta := runtimeMetadata{
+		Image:             normalized.Image,
+		BootArgs:          defaultBootArgs,
+		HTTPPort:          suggestedHTTPPort,
+		Entrypoint:        cloneStrings(pulled.Config.Entrypoint),
+		Cmd:               cloneStrings(pulled.Config.Cmd),
+		StartCmd:          cloneStrings(startCmd),
+		Env:               cloneStrings(pulled.Config.Env),
+		WorkingDir:        pulled.Config.WorkingDir,
+		User:              pulled.Config.User,
+		PayloadDevice:     "/dev/vdb",
+		PayloadFSType:     "ext4",
+		PayloadMountPoint: "/mnt/payload",
+			PayloadReadOnly:   true,
+		EnvDevice:         "/dev/vdc",
+		EnvFSType:         "ext4",
+		EnvMountPoint:     "/mnt/env",
+		EnvReadOnly:       true,
+		EnvFile:           "/mnt/env/mergen.env",
+	}
+
+	runtimePath := filepath.Join(normalized.OutputDir, "mergen.runtime.json")
+	if err := writeRuntimeMetadata(runtimePath, runtimeMeta); err != nil {
 		return Result{}, err
 	}
 
-	rootfsTar := filepath.Join(normalized.OutputDir, "rootfs.tar")
-	if err := createTarFromDir(rootfsDir, rootfsTar); err != nil {
-		return Result{}, err
-	}
-
-	sizeMiB := normalized.SizeMiB
-	if sizeMiB == 0 {
-		rootfsBytes, err := directorySizeBytes(rootfsDir)
-		if err != nil {
+	if normalized.GoldenRootFS != "" {
+		if err := copyDir(normalized.GoldenRootFS, goldenRootFSDir); err != nil {
+			return Result{}, fmt.Errorf("copy golden rootfs base: %w", err)
+		}
+	} else {
+		if err := prepareMinimalGoldenRootFS(goldenRootFSDir); err != nil {
 			return Result{}, err
 		}
-		sizeMiB = int((rootfsBytes+1024*1024-1)/(1024*1024)) + defaultRootFSOverhead
 	}
-	if sizeMiB <= 0 {
-		return Result{}, errors.New("sizeMiB must be > 0")
+	if err := injectGoldenBinaries(normalized, goldenRootFSDir); err != nil {
+		return Result{}, err
+	}
+	if err := injectRuntimeMetadata(runtimePath, goldenRootFSDir); err != nil {
+		return Result{}, err
 	}
 
-	rootfsExt4 := filepath.Join(normalized.OutputDir, "rootfs.ext4")
-	if err := buildExt4(ctx, rootfsDir, rootfsExt4, sizeMiB); err != nil {
+	envFilePath := filepath.Join(envRootFSDir, "mergen.env")
+	if err := writeEnvDiskFile(envFilePath, normalized.EnvLine); err != nil {
+		return Result{}, err
+	}
+
+	payloadRootFSTar := filepath.Join(normalized.OutputDir, "payload-rootfs.tar")
+	if err := createTarFromDir(payloadRootFSDir, payloadRootFSTar); err != nil {
+		return Result{}, err
+	}
+	goldenRootFSTar := filepath.Join(normalized.OutputDir, "golden-rootfs.tar")
+	if err := createTarFromDir(goldenRootFSDir, goldenRootFSTar); err != nil {
+		return Result{}, err
+	}
+
+	payloadSizeMiB, err := resolveSizeMiB(payloadRootFSDir, normalized.SizeMiB, defaultRootFSOverhead, 64)
+	if err != nil {
+		return Result{}, err
+	}
+	goldenSizeMiB, err := resolveSizeMiB(goldenRootFSDir, normalized.GoldenSizeMiB, defaultGoldenOverhead, defaultGoldenSizeMiB)
+	if err != nil {
+		return Result{}, err
+	}
+	envSizeMiB, err := resolveSizeMiB(envRootFSDir, normalized.EnvSizeMiB, defaultEnvOverhead, defaultEnvSizeMiB)
+	if err != nil {
+		return Result{}, err
+	}
+
+	payloadRootFSExt4 := filepath.Join(normalized.OutputDir, "payload-rootfs.ext4")
+	if err := buildExt4(ctx, payloadRootFSDir, payloadRootFSExt4, payloadSizeMiB); err != nil {
+		return Result{}, err
+	}
+	goldenRootFSExt4 := filepath.Join(normalized.OutputDir, "golden-rootfs.ext4")
+	if err := buildExt4(ctx, goldenRootFSDir, goldenRootFSExt4, goldenSizeMiB); err != nil {
+		return Result{}, err
+	}
+	envRootFSExt4 := filepath.Join(normalized.OutputDir, "env-rootfs.ext4")
+	if err := buildExt4(ctx, envRootFSDir, envRootFSExt4, envSizeMiB); err != nil {
 		return Result{}, err
 	}
 
@@ -185,16 +277,23 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	suggestedVMPath := filepath.Join(normalized.OutputDir, "suggested-vm-request.json")
-	if err := writeSuggestedVMRequest(suggestedVMPath, normalized.Image, rootfsExt4, suggestedHTTPPort); err != nil {
+	if err := writeSuggestedVMRequest(suggestedVMPath, normalized.Image, goldenRootFSExt4, payloadRootFSExt4, envRootFSExt4, suggestedHTTPPort); err != nil {
 		return Result{}, err
 	}
 
 	result := Result{
 		Image:                 normalized.Image,
 		OutputDir:             normalized.OutputDir,
-		RootFSDir:             rootfsDir,
-		RootFSTarPath:         rootfsTar,
-		RootFSExt4Path:        rootfsExt4,
+		RootFSDir:             goldenRootFSDir,
+		RootFSTarPath:         goldenRootFSTar,
+		RootFSExt4Path:        goldenRootFSExt4,
+		PayloadRootFSDir:      payloadRootFSDir,
+		PayloadRootFSTarPath:  payloadRootFSTar,
+		PayloadRootFSExt4Path: payloadRootFSExt4,
+		EnvRootFSDir:          envRootFSDir,
+		EnvRootFSExt4Path:     envRootFSExt4,
+		RuntimePath:           runtimePath,
+		EnvFilePath:           envFilePath,
 		MetadataPath:          filepath.Join(normalized.OutputDir, "image-meta.json"),
 		SuggestedBootArgsPath: bootArgsPath,
 		SuggestedVMPath:       suggestedVMPath,
@@ -206,7 +305,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		"converter completed",
 		"image", result.Image,
 		"outputDir", result.OutputDir,
-		"rootfsExt4", result.RootFSExt4Path,
+		"goldenRootfsExt4", result.RootFSExt4Path,
+		"payloadRootfsExt4", result.PayloadRootFSExt4Path,
+		"envRootfsExt4", result.EnvRootFSExt4Path,
 		"httpPort", result.SuggestedHTTPPort,
 	)
 	return result, nil
@@ -249,12 +350,18 @@ func (r *Runner) Delete(ctx context.Context, opts DeleteOptions) (DeleteResult, 
 }
 
 type normalizedOptions struct {
-	Image        string
-	OutputDir    string
-	Name         string
-	SizeMiB      int
-	SkipPull     bool
-	SbinInitPath string
+	Image          string
+	OutputDir      string
+	Name           string
+	SizeMiB        int
+	SkipPull       bool
+	SbinInitPath   string
+	TelemetryPath  string
+	SupervisorPath string
+	GoldenRootFS   string
+	GoldenSizeMiB  int
+	EnvSizeMiB     int
+	EnvLine        string
 }
 
 type normalizedTarget struct {
@@ -273,18 +380,43 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 	if sbinInitPath == "" {
 		sbinInitPath = defaultSbinInitPath
 	}
+	telemetryPath := strings.TrimSpace(opts.TelemetryPath)
+	if telemetryPath == "" {
+		telemetryPath = defaultTelemetryPath
+	}
+	supervisorPath := strings.TrimSpace(opts.SupervisorPath)
+	if supervisorPath == "" {
+		supervisorPath = defaultSupervisorPath
+	}
+	goldenRootFS := strings.TrimSpace(opts.GoldenRootFS)
+	envLine := strings.TrimSpace(opts.EnvLine)
+	if envLine == "" {
+		envLine = defaultEnvLine
+	}
 
 	if opts.SizeMiB < 0 {
 		return normalizedOptions{}, fmt.Errorf("sizeMiB must be >= 0, got %d", opts.SizeMiB)
 	}
+	if opts.GoldenSizeMiB < 0 {
+		return normalizedOptions{}, fmt.Errorf("goldenSizeMiB must be >= 0, got %d", opts.GoldenSizeMiB)
+	}
+	if opts.EnvSizeMiB < 0 {
+		return normalizedOptions{}, fmt.Errorf("envSizeMiB must be >= 0, got %d", opts.EnvSizeMiB)
+	}
 
 	return normalizedOptions{
-		Image:        target.Image,
-		OutputDir:    target.OutputDir,
-		Name:         target.Name,
-		SizeMiB:      opts.SizeMiB,
-		SkipPull:     opts.SkipPull,
-		SbinInitPath: sbinInitPath,
+		Image:          target.Image,
+		OutputDir:      target.OutputDir,
+		Name:           target.Name,
+		SizeMiB:        opts.SizeMiB,
+		SkipPull:       opts.SkipPull,
+		SbinInitPath:   sbinInitPath,
+		TelemetryPath:  telemetryPath,
+		SupervisorPath: supervisorPath,
+		GoldenRootFS:   goldenRootFS,
+		GoldenSizeMiB:  opts.GoldenSizeMiB,
+		EnvSizeMiB:     opts.EnvSizeMiB,
+		EnvLine:        envLine,
 	}, nil
 }
 
@@ -415,6 +547,42 @@ func ensureReadableFile(path string) error {
 	}
 	_ = file.Close()
 	return nil
+}
+
+func ensureReadableDir(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot stat directory %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path is not a directory: %q", path)
+	}
+	return nil
+}
+
+func resetDir(path string) error {
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	return os.MkdirAll(path, 0o755)
+}
+
+func resolveSizeMiB(rootfsDir string, requested, overhead, minimum int) (int, error) {
+	sizeMiB := requested
+	if sizeMiB == 0 {
+		rootfsBytes, err := directorySizeBytes(rootfsDir)
+		if err != nil {
+			return 0, err
+		}
+		sizeMiB = int((rootfsBytes+1024*1024-1)/(1024*1024)) + overhead
+	}
+	if sizeMiB < minimum {
+		sizeMiB = minimum
+	}
+	if sizeMiB <= 0 {
+		return 0, errors.New("sizeMiB must be > 0")
+	}
+	return sizeMiB, nil
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -845,6 +1013,27 @@ type metadata struct {
 	SuggestedHTTPPort int       `json:"suggestedHTTPPort,omitempty"`
 }
 
+type runtimeMetadata struct {
+	Image             string   `json:"image"`
+	BootArgs          string   `json:"bootArgs"`
+	HTTPPort          int      `json:"httpPort,omitempty"`
+	Entrypoint        []string `json:"entrypoint,omitempty"`
+	Cmd               []string `json:"cmd,omitempty"`
+	StartCmd          []string `json:"startCmd,omitempty"`
+	Env               []string `json:"env,omitempty"`
+	WorkingDir        string   `json:"workingDir,omitempty"`
+	User              string   `json:"user,omitempty"`
+	PayloadDevice     string   `json:"payloadDevice"`
+	PayloadFSType     string   `json:"payloadFSType"`
+	PayloadMountPoint string   `json:"payloadMountPoint"`
+	PayloadReadOnly   bool     `json:"payloadReadOnly"`
+	EnvDevice         string   `json:"envDevice"`
+	EnvFSType         string   `json:"envFSType"`
+	EnvMountPoint     string   `json:"envMountPoint"`
+	EnvReadOnly       bool     `json:"envReadOnly"`
+	EnvFile           string   `json:"envFile"`
+}
+
 func writeMetadataFiles(rootfsDir, outputDir string, meta metadata) error {
 	body, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -867,6 +1056,181 @@ func writeMetadataFiles(rootfsDir, outputDir string, meta metadata) error {
 		return fmt.Errorf("write output metadata: %w", err)
 	}
 	return nil
+}
+
+func writeRuntimeMetadata(path string, meta runtimeMetadata) error {
+	body, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode runtime metadata: %w", err)
+	}
+	body = append(body, '\n')
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		return fmt.Errorf("write runtime metadata: %w", err)
+	}
+	return nil
+}
+
+func prepareMinimalGoldenRootFS(goldenDir string) error {
+	dirs := []string{
+		"bin",
+		"sbin",
+		"etc/mergen",
+		"dev",
+		"proc",
+		"sys",
+		"run",
+		"run/lock",
+		"tmp",
+		"var",
+		"mnt",
+		"mnt/payload",
+		"mnt/env",
+	}
+	for _, rel := range dirs {
+		if err := os.MkdirAll(filepath.Join(goldenDir, rel), 0o755); err != nil {
+			return fmt.Errorf("prepare golden dir %s: %w", rel, err)
+		}
+	}
+
+	if err := os.Chmod(filepath.Join(goldenDir, "tmp"), 0o1777); err != nil {
+		return fmt.Errorf("chmod golden /tmp: %w", err)
+	}
+	if err := os.Symlink("/run", filepath.Join(goldenDir, "var", "run")); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("create /var/run symlink: %w", err)
+	}
+	if err := os.Symlink("/run/lock", filepath.Join(goldenDir, "var", "lock")); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("create /var/lock symlink: %w", err)
+	}
+
+	return nil
+}
+
+func injectGoldenBinaries(opts normalizedOptions, goldenDir string) error {
+	if err := os.MkdirAll(filepath.Join(goldenDir, "sbin"), 0o755); err != nil {
+		return fmt.Errorf("prepare golden /sbin: %w", err)
+	}
+
+	initBytes, err := os.ReadFile(opts.SbinInitPath)
+	if err != nil {
+		return fmt.Errorf("read mergen init binary: %w", err)
+	}
+	if err := writeExecutableFileReplacingSymlink(filepath.Join(goldenDir, "sbin", "init"), initBytes); err != nil {
+		return fmt.Errorf("write golden /sbin/init: %w", err)
+	}
+	if err := writeExecutableFileReplacingSymlink(filepath.Join(goldenDir, "sbin", "mergen-init"), initBytes); err != nil {
+		return fmt.Errorf("write golden /sbin/mergen-init: %w", err)
+	}
+
+	telemetryBytes, err := os.ReadFile(opts.TelemetryPath)
+	if err != nil {
+		return fmt.Errorf("read mergen telemetry binary: %w", err)
+	}
+	if err := writeExecutableFileReplacingSymlink(filepath.Join(goldenDir, "sbin", "mergen-telemetry"), telemetryBytes); err != nil {
+		return fmt.Errorf("write golden /sbin/mergen-telemetry: %w", err)
+	}
+
+	supervisorBytes, err := os.ReadFile(opts.SupervisorPath)
+	if err != nil {
+		return fmt.Errorf("read mergen supervisor binary: %w", err)
+	}
+	if err := writeExecutableFileReplacingSymlink(filepath.Join(goldenDir, "sbin", "mergen-supervisor"), supervisorBytes); err != nil {
+		return fmt.Errorf("write golden /sbin/mergen-supervisor: %w", err)
+	}
+
+	return nil
+}
+
+func injectRuntimeMetadata(runtimePath, goldenDir string) error {
+	body, err := os.ReadFile(runtimePath)
+	if err != nil {
+		return fmt.Errorf("read runtime metadata: %w", err)
+	}
+
+	targetDir := filepath.Join(goldenDir, "etc", "mergen")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return fmt.Errorf("prepare runtime metadata target dir: %w", err)
+	}
+	targetPath := filepath.Join(targetDir, "mergen.runtime.json")
+	if err := os.WriteFile(targetPath, body, 0o644); err != nil {
+		return fmt.Errorf("write runtime metadata to golden rootfs: %w", err)
+	}
+	return nil
+}
+
+func writeEnvDiskFile(path, envLine string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("prepare env disk dir: %w", err)
+	}
+	body := strings.TrimSpace(envLine) + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write env disk file: %w", err)
+	}
+	return nil
+}
+
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		targetPath := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			return os.MkdirAll(targetPath, info.Mode().Perm())
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_ = os.Remove(targetPath)
+			return os.Symlink(linkTarget, targetPath)
+		}
+
+		sourceFile, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			sourceFile.Close()
+			return err
+		}
+		targetFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		if err != nil {
+			sourceFile.Close()
+			return err
+		}
+		_, copyErr := io.Copy(targetFile, sourceFile)
+		closeSourceErr := sourceFile.Close()
+		if copyErr != nil {
+			targetFile.Close()
+			return copyErr
+		}
+		if err := targetFile.Close(); err != nil {
+			return err
+		}
+		if closeSourceErr != nil {
+			return closeSourceErr
+		}
+		return nil
+	})
 }
 
 func injectSbinInit(hostPath, rootfsDir string) error {
@@ -1062,17 +1426,19 @@ func inferHTTPPort(exposed map[string]struct{}) int {
 	return candidates[0].port
 }
 
-func writeSuggestedVMRequest(path, image, rootfsExt4 string, httpPort int) error {
+func writeSuggestedVMRequest(path, image, rootfsExt4, payloadExt4, envExt4 string, httpPort int) error {
 	if httpPort <= 0 {
 		httpPort = 80
 	}
 
 	payload := map[string]any{
-		"rootfs":   rootfsExt4,
-		"kernel":   "/var/lib/mergen/base/vmlinux",
-		"vcpu":     1,
-		"memMiB":   512,
-		"httpPort": httpPort,
+		"rootfs":      rootfsExt4,
+		"payloadDisk": payloadExt4,
+		"envDisk":     envExt4,
+		"kernel":      "/var/lib/mergen/base/vmlinux",
+		"vcpu":        1,
+		"memMiB":      512,
+		"httpPort":    httpPort,
 		"ports": []map[string]any{
 			{
 				"guest": httpPort,

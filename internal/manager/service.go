@@ -84,6 +84,18 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 			return "", fmt.Errorf("%w: dataDisk %v", ErrInvalidRequest, err)
 		}
 	}
+	if strings.TrimSpace(req.PayloadDisk) != "" {
+		if err := validatePathExists(req.PayloadDisk); err != nil {
+			s.logger.Debug("create vm payload disk validation failed", "path", req.PayloadDisk, "error", err)
+			return "", fmt.Errorf("%w: payloadDisk %v", ErrInvalidRequest, err)
+		}
+	}
+	if strings.TrimSpace(req.EnvDisk) != "" {
+		if err := validatePathExists(req.EnvDisk); err != nil {
+			s.logger.Debug("create vm env disk validation failed", "path", req.EnvDisk, "error", err)
+			return "", fmt.Errorf("%w: envDisk %v", ErrInvalidRequest, err)
+		}
+	}
 
 	metas, err := s.store.ListMetas()
 	if err != nil {
@@ -103,19 +115,21 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 	}
 
 	meta := model.VMMetadata{
-		ID:        vmID,
-		CreatedAt: time.Now().UTC(),
-		RootFS:    req.RootFS,
-		Kernel:    req.Kernel,
-		DataDisk:  req.DataDisk,
-		Ports:     ports,
-		HTTPPort:  req.HTTPPort,
-		GuestIP:   guestIP,
-		TapName:   network.TapName(vmID),
-		NetNS:     network.NetNSName(vmID),
-		Metadata:  req.Metadata,
-		Tags:      req.Tags,
-		Hooks:     req.Hooks,
+		ID:          vmID,
+		CreatedAt:   time.Now().UTC(),
+		RootFS:      req.RootFS,
+		Kernel:      req.Kernel,
+		PayloadDisk: req.PayloadDisk,
+		DataDisk:    req.DataDisk,
+		EnvDisk:     req.EnvDisk,
+		Ports:       ports,
+		HTTPPort:    req.HTTPPort,
+		GuestIP:     guestIP,
+		TapName:     network.TapName(vmID),
+		NetNS:       network.NetNSName(vmID),
+		Metadata:    req.Metadata,
+		Tags:        req.Tags,
+		Hooks:       req.Hooks,
 	}
 
 	vmCfg := firecracker.RenderVMConfig(req, meta)

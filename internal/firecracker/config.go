@@ -27,12 +27,29 @@ func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMCo
 		},
 	}
 
+	if strings.TrimSpace(req.PayloadDisk) != "" {
+		drives = append(drives, model.Drive{
+			DriveID:      "payload",
+			PathOnHost:   req.PayloadDisk,
+			IsRootDevice: false,
+			IsReadOnly:   true,
+		})
+	}
+
 	if strings.TrimSpace(req.DataDisk) != "" {
 		drives = append(drives, model.Drive{
 			DriveID:      "data",
 			PathOnHost:   req.DataDisk,
 			IsRootDevice: false,
 			IsReadOnly:   false,
+		})
+	}
+	if strings.TrimSpace(req.EnvDisk) != "" {
+		drives = append(drives, model.Drive{
+			DriveID:      "env",
+			PathOnHost:   req.EnvDisk,
+			IsRootDevice: false,
+			IsReadOnly:   true,
 		})
 	}
 

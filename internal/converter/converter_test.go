@@ -2,6 +2,7 @@ package converter
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -242,5 +243,39 @@ func TestRunnerDelete_NotFound(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for missing output dir")
+	}
+}
+
+func TestWriteSuggestedVMRequestIncludesPayloadAndEnvDisks(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "suggested-vm-request.json")
+	if err := writeSuggestedVMRequest(
+		outputPath,
+		"nginx:alpine",
+		"/var/lib/mergen/images/nginx/golden-rootfs.ext4",
+		"/var/lib/mergen/images/nginx/payload-rootfs.ext4",
+		"/var/lib/mergen/images/nginx/env-rootfs.ext4",
+		8080,
+	); err != nil {
+		t.Fatalf("writeSuggestedVMRequest failed: %v", err)
+	}
+
+	body, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read suggested vm request: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode suggested vm request: %v", err)
+	}
+
+	if got := payload["payloadDisk"]; got != "/var/lib/mergen/images/nginx/payload-rootfs.ext4" {
+		t.Fatalf("payloadDisk mismatch: got %#v", got)
+	}
+	if got := payload["envDisk"]; got != "/var/lib/mergen/images/nginx/env-rootfs.ext4" {
+		t.Fatalf("envDisk mismatch: got %#v", got)
 	}
 }

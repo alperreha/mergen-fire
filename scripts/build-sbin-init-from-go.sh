@@ -3,14 +3,14 @@ set -euo pipefail
 
 usage() {
   cat <<'HELP'
-Build Go-based mergen init-snapshot binary and place it into artifacts for mergen-converter.
+Build Go-based mergen init binaries and place them into artifacts for mergen-converter.
 
 Usage:
   build-sbin-init-from-go.sh [options]
 
 Options:
   --output-dir PATH     Output directory (default: <repo>/artifacts/sbin-init)
-  --output-name NAME    Output binary name (default: sbin-init)
+  --output-name NAME    Output init binary name (default: sbin-init)
   --goos OS             Target GOOS (default: linux)
   --goarch ARCH         Target GOARCH (default: amd64)
   --cgo-enabled 0|1     CGO_ENABLED value (default: 0)
@@ -101,6 +101,11 @@ require_cmd go
 require_cmd chmod
 require_cmd mkdir
 
+GO_BIN="$(go env GOROOT)/bin/go"
+if [[ ! -x "${GO_BIN}" ]]; then
+  GO_BIN="$(command -v go)"
+fi
+
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_PATH="${OUTPUT_DIR}/${OUTPUT_NAME}"
 
@@ -111,18 +116,30 @@ else
   LDFLAGS_COMBINED="${BASE_LDFLAGS}"
 fi
 
-echo "building cmd/mergen-init-snapshot"
+echo "building cmd/mergen-init (+ telemetry + supervisor)"
 echo "  target: ${TARGET_GOOS}/${TARGET_GOARCH}"
 echo "  cgo:    ${CGO_VALUE}"
-echo "  output: ${OUTPUT_PATH}"
+echo "  go:     ${GO_BIN}"
+echo "  output dir: ${OUTPUT_DIR}"
+
+build_cmd() {
+  local pkg="${1}"
+  local out="${2}"
+  echo "  - ${pkg} -> ${out}"
+  CGO_ENABLED="${CGO_VALUE}" GOOS="${TARGET_GOOS}" GOARCH="${TARGET_GOARCH}" \
+    "${GO_BIN}" build -trimpath -ldflags "${LDFLAGS_COMBINED}" -o "${out}" "${pkg}"
+}
 
 (
   cd "${REPO_ROOT}"
-  CGO_ENABLED="${CGO_VALUE}" GOOS="${TARGET_GOOS}" GOARCH="${TARGET_GOARCH}" \
-    go build -trimpath -ldflags "${LDFLAGS_COMBINED}" -o "${OUTPUT_PATH}" ./cmd/mergen-init-snapshot
+  build_cmd ./cmd/mergen-init "${OUTPUT_PATH}"
+  build_cmd ./cmd/mergen-telemetry "${OUTPUT_DIR}/mergen-telemetry"
+  build_cmd ./cmd/mergen-supervisor "${OUTPUT_DIR}/mergen-supervisor"
 )
 
 chmod +x "${OUTPUT_PATH}"
+chmod +x "${OUTPUT_DIR}/mergen-telemetry"
+chmod +x "${OUTPUT_DIR}/mergen-supervisor"
 
 GIT_SHA="unknown"
 if command -v git >/dev/null 2>&1; then
@@ -130,8 +147,10 @@ if command -v git >/dev/null 2>&1; then
 fi
 
 cat > "${OUTPUT_DIR}/build-info.txt" <<INFO
-source=cmd/mergen-init-snapshot
+source=cmd/mergen-init
 binary=${OUTPUT_PATH}
+telemetry_binary=${OUTPUT_DIR}/mergen-telemetry
+supervisor_binary=${OUTPUT_DIR}/mergen-supervisor
 goos=${TARGET_GOOS}
 goarch=${TARGET_GOARCH}
 cgo_enabled=${CGO_VALUE}
@@ -143,4 +162,6 @@ INFO
 echo
 echo "build completed"
 echo "  binary: ${OUTPUT_PATH}"
+echo "  telemetry: ${OUTPUT_DIR}/mergen-telemetry"
+echo "  supervisor: ${OUTPUT_DIR}/mergen-supervisor"
 echo "  info:   ${OUTPUT_DIR}/build-info.txt"

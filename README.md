@@ -11,7 +11,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - `mergend`: VM lifecycle manager (control-plane)
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
-- `mergen-init-snapshot`: Go PID1 init binary for converted rootfs
+- `mergen-init`: Go PID1 init binary for converted rootfs
 
 ## Table of Contents
 
@@ -74,7 +74,7 @@ Forwarder design details: `docs/forwarder-design.md`
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
 - `cmd/mergen-converter`: registry image conversion CLI
-- `cmd/mergen-init-snapshot`: in-guest init/PID1 runtime
+- `cmd/mergen-init`: in-guest init/PID1 runtime
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
@@ -136,11 +136,11 @@ curl -s http://127.0.0.1:8080/healthz
 
 ### 2. Set up and run `mergen-forwarder`
 
-Generate wildcard cert into `/etc/mergen/certs`:
+Generate wildcard cert into `/etc/mergen/cert`:
 
 ```bash
-sudo install -d -m 0755 /etc/mergen/certs
-sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
+sudo install -d -m 0755 /etc/mergen/cert
+sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/cert
 ```
 
 Example for custom domain pattern (`*.vm.example.com`):
@@ -148,7 +148,7 @@ Example for custom domain pattern (`*.vm.example.com`):
 ```bash
 CERT_DOMAIN_PREFIX=vm \
 CERT_DOMAIN_SUFFIX=example.com \
-sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
+sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/cert
 ```
 
 Run forwarder:
@@ -156,8 +156,8 @@ Run forwarder:
 ```bash
 FWD_DOMAIN_PREFIX= \
 FWD_DOMAIN_SUFFIX=localhost \
-FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt \
-FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key \
+FWD_TLS_CERT_FILE=/etc/mergen/cert/wildcard.localhost.crt \
+FWD_TLS_KEY_FILE=/etc/mergen/cert/wildcard.localhost.key \
 FWD_LOG_LEVEL=debug \
 go run ./cmd/mergen-forwarder
 ```
@@ -188,7 +188,7 @@ go run ./cmd/mergen-converter \
 
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
 Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
-Injected `/sbin/init` is expected to be built from `cmd/mergen-init-snapshot`.
+Injected `/sbin/init` is expected to be built from `cmd/mergen-init`.
 Default path is under `/var/lib/mergen/images`, so run with sufficient permissions (or override with `-output-dir`).
 Default output path follows image reference hierarchy under `/var/lib/mergen/images`:
 
@@ -197,10 +197,15 @@ Default output path follows image reference hierarchy under `/var/lib/mergen/ima
 
 Converter outputs:
 
-- `rootfs/` extracted filesystem
-- `rootfs.tar`
-- `rootfs.ext4`
-- `image-meta.json` (entrypoint/cmd/env/startCmd metadata for init)
+- `golden-rootfs/` (disk0 filesystem with `mergen-init`, `mergen-telemetry`, `mergen-supervisor`)
+- `golden-rootfs.ext4` (disk0)
+- `payload-rootfs/` extracted image filesystem
+- `payload-rootfs.tar`
+- `payload-rootfs.ext4` (disk1)
+- `env-rootfs/` generated env filesystem
+- `env-rootfs.ext4` (disk2)
+- `image-meta.json` (entrypoint/cmd/env/startCmd metadata from image)
+- `mergen.runtime.json` (supervisor runtime spec consumed in guest)
 - `suggested-bootargs.txt` (`init=/sbin/init`)
 - `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
 
@@ -221,7 +226,9 @@ Use `-output-dir` if you want to delete a non-default conversion location.
 VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
   -H 'content-type: application/json' \
   -d '{
-    "rootfs": "/var/lib/mergen/images/nginx:alpine/rootfs.ext4",
+    "rootfs": "/var/lib/mergen/images/nginx:alpine/golden-rootfs.ext4",
+    "payloadDisk": "/var/lib/mergen/images/nginx:alpine/payload-rootfs.ext4",
+    "envDisk": "/var/lib/mergen/images/nginx:alpine/env-rootfs.ext4",
     "kernel": "/var/lib/mergen/base/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
@@ -308,8 +315,8 @@ Environment variables:
 
 - `FWD_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
 - `FWD_NETNS_ROOT` (default `/run/netns`)
-- `FWD_TLS_CERT_FILE` (default `/etc/mergen/certs/wildcard.localhost.crt`)
-- `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
+- `FWD_TLS_CERT_FILE` (default `/etc/mergen/cert/wildcard.localhost.crt`)
+- `FWD_TLS_KEY_FILE` (default `/etc/mergen/cert/wildcard.localhost.key`)
 - `FWD_DOMAIN_PREFIX` (default empty)
 - `FWD_DOMAIN_SUFFIX` (default `localhost`)
 - `FWD_HTTPS_ADDR` (default `:443`)

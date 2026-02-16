@@ -41,8 +41,8 @@ func FromEnv() (Config, error) {
 	cfg := Config{
 		ConfigRoot:       getEnv("FWD_CONFIG_ROOT", "/etc/mergen/vm.d"),
 		NetNSRoot:        getEnv("FWD_NETNS_ROOT", "/run/netns"),
-		CertFile:         getEnv("FWD_TLS_CERT_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".crt"),
-		KeyFile:          getEnv("FWD_TLS_KEY_FILE", "/etc/mergen/certs/wildcard."+defaultCertBase+".key"),
+		CertFile:         getEnv("FWD_TLS_CERT_FILE", "/etc/mergen/cert/wildcard."+defaultCertBase+".crt"),
+		KeyFile:          getEnv("FWD_TLS_KEY_FILE", "/etc/mergen/cert/wildcard."+defaultCertBase+".key"),
 		HTTPSAddr:        httpsAddr,
 		DomainPrefix:     domainPrefix,
 		DomainSuffix:     domainSuffix,

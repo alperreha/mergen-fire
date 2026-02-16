@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -21,14 +23,17 @@ import (
 )
 
 const (
-	defaultMetaPath   = "/etc/mergen/image-meta.json"
-	defaultFlyRunPath = "/fly/run.json"
+	defaultMetaPath       = "/etc/mergen/image-meta.json"
+	defaultFlyRunPath     = "/fly/run.json"
+	defaultRuntimePath    = "/etc/mergen/mergen.runtime.json"
+	defaultSupervisorPath = "/sbin/mergen-supervisor"
+	defaultTelemetryPath  = "/sbin/mergen-telemetry"
 )
 
 func main() {
 	logger := newLogger()
 	if os.Getpid() != 1 {
-		logger.Warn("mergen-init-snapshot is expected to run as PID 1", "pid", os.Getpid())
+		logger.Warn("mergen-init is expected to run as PID 1", "pid", os.Getpid())
 	}
 
 	exitCode, err := run(logger)
@@ -44,7 +49,13 @@ func run(logger *slog.Logger) (int, error) {
 		return 1, err
 	}
 
-	spec, source, err := loadStartSpec()
+	telemetryCmd, err := startTelemetrySidecar(logger)
+	if err != nil {
+		logger.Warn("telemetry sidecar start failed", "path", defaultTelemetryPath, "error", err)
+	}
+	defer stopTelemetrySidecar(telemetryCmd, logger)
+
+	spec, source, err := loadPrimaryStartSpec()
 	if err != nil {
 		return 1, err
 	}
@@ -59,6 +70,71 @@ func run(logger *slog.Logger) (int, error) {
 		return 1, err
 	}
 	return code, nil
+}
+
+func loadPrimaryStartSpec() (startSpec, string, error) {
+	if fileExists(defaultSupervisorPath) {
+		env := currentEnvMap()
+		if strings.TrimSpace(env["MERGEN_RUNTIME_PATH"]) == "" {
+			env["MERGEN_RUNTIME_PATH"] = defaultRuntimePath
+		}
+		return startSpec{
+			Argv:       []string{defaultSupervisorPath},
+			Env:        env,
+			User:       "0:0",
+			WorkingDir: "/",
+		}, defaultSupervisorPath, nil
+	}
+
+	return loadStartSpec()
+}
+
+func startTelemetrySidecar(logger *slog.Logger) (*exec.Cmd, error) {
+	if !fileExists(defaultTelemetryPath) {
+		logger.Debug("telemetry sidecar not found, skipping", "path", defaultTelemetryPath)
+		return nil, nil
+	}
+
+	cmd := exec.Command(defaultTelemetryPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	logger.Info("telemetry sidecar started", "path", defaultTelemetryPath, "pid", cmd.Process.Pid)
+	return cmd, nil
+}
+
+func stopTelemetrySidecar(cmd *exec.Cmd, logger *slog.Logger) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	pid := cmd.Process.Pid
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		logger.Debug("signal telemetry sidecar process group failed", "pid", pid, "error", err)
+	}
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		logger.Debug("signal telemetry sidecar process failed", "pid", pid, "error", err)
+	}
+}
+
+func currentEnvMap() map[string]string {
+	out := make(map[string]string)
+	for _, item := range os.Environ() {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		if key == "" {
+			continue
+		}
+		out[key] = parts[1]
+	}
+	return out
 }
 
 func newLogger() *slog.Logger {
