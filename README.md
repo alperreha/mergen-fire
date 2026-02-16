@@ -13,6 +13,20 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
 - `mergen-init-snapshot`: Go PID1 init binary for converted rootfs
 
+## Table of Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+  - [1. Run `mergend` daemon](#1-run-mergend-daemon)
+  - [2. Set up and run `mergen-forwarder`](#2-set-up-and-run-mergen-forwarder)
+  - [3. Convert OCI image with `mergen-converter`](#3-convert-oci-image-with-mergen-converter)
+  - [4. End-to-end test with API and curl](#4-end-to-end-test-with-api-and-curl)
+- [API behavior notes](#api-behavior-notes)
+- [Configuration](#configuration)
+- [Forwarder Configuration](#forwarder-configuration)
+- [Systemd template and scripts](#systemd-template-and-scripts)
+- [Testing](#testing)
+
 ## Why this project
 
 - Run Firecracker VMs with simple REST endpoints.
@@ -94,59 +108,9 @@ Optional (only for legacy helper script `scripts/build-rootfs-from-dockerhub.sh`
 
 ## Quick start
 
-1. Run manager daemon:
+### 1. Run `mergend` daemon
 
-```bash
-go run ./cmd/mergend
-```
-
-2. Health check:
-
-```bash
-curl -s http://127.0.0.1:8080/healthz
-```
-
-3. Create VM: (you can start vm after run mergend and mergen-forwarder services)
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/v1/vms \
-  -H 'content-type: application/json' \
-  -d '{
-    "rootfs": "/var/lib/mergen/base/rootfs.ext4",
-    "kernel": "/var/lib/mergen/base/vmlinux",
-    "vcpu": 1,
-    "memMiB": 512,
-    "ports": [{"guest": 80, "host": 0}],
-    "httpPort": 80,
-    "tags": {"app": "app1"},
-    "autoStart": false
-  }'
-
-# after creation get generated uuid and set below.
-export APPID="<generated-uuid>"
-
-# start vm 
-systemctl start mergen@$APPID.service
-
-# if http ports are right. You can test with curl after forwarder is started.
-curl -k --resolve "$APPID.localhost:443:127.0.0.1" https://$APPID.localhost/
-
-# stop vm
-systemctl stop mergen@$APPID.service
-
-# debug logs
-systemctl status mergen@$APPID.service
-journalctl -u mergen@$APPID.service
-
-# delete vm
-curl -s -X POST http://127.0.0.1:8080/v1/vms/$APPID/stop
-curl -s -X DELETE http://127.0.0.1:8080/v1/vms/$CURID
-
-```
-
-### Systemd template install (required on Linux host)
-
-If you see `Unit mergen@<id>.service not found`, install the template and helper scripts:
+Install systemd template + helper scripts (Linux host):
 
 ```bash
 sudo install -D -m 0644 deploy/systemd/mergen@.service /etc/systemd/system/mergen@.service
@@ -158,7 +122,21 @@ sudo install -m 0755 scripts/mergen-net-cleanup /usr/local/bin/mergen-net-cleanu
 sudo systemctl daemon-reload
 ```
 
-### Generate wildcard certificate (prefix + suffix aware)
+Run daemon:
+
+```bash
+go run ./cmd/mergend
+```
+
+Health check:
+
+```bash
+curl -s http://127.0.0.1:8080/healthz
+```
+
+### 2. Set up and run `mergen-forwarder`
+
+Generate wildcard cert into `/etc/mergen/certs`:
 
 ```bash
 sudo install -d -m 0755 /etc/mergen/certs
@@ -173,7 +151,25 @@ CERT_DOMAIN_SUFFIX=example.com \
 sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
 ```
 
-### Convert image with `mergen-converter`
+Run forwarder:
+
+```bash
+FWD_DOMAIN_PREFIX= \
+FWD_DOMAIN_SUFFIX=localhost \
+FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt \
+FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key \
+FWD_LOG_LEVEL=debug \
+go run ./cmd/mergen-forwarder
+```
+
+Forwarder behavior:
+
+- Listens on HTTPS `:443` by default (`FWD_HTTPS_ADDR`).
+- Terminates TLS and resolves SNI label to VM metadata.
+- Routes to `guestIP:httpPort` from VM `meta.json`.
+- Returns `502` when resolved VM has no valid `httpPort`.
+
+### 3. Convert OCI image with `mergen-converter`
 
 Place your custom init binary first:
 
@@ -218,39 +214,38 @@ go run ./cmd/mergen-converter \
 
 Use `-output-dir` if you want to delete a non-default conversion location.
 
-### Run TLS SNI forwarder
+### 4. End-to-end test with API and curl
 
 ```bash
-FWD_DOMAIN_PREFIX= \
-FWD_DOMAIN_SUFFIX=localhost \
-FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt \
-FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key \
-FWD_LOG_LEVEL=debug \
-go run ./cmd/mergen-forwarder
-```
+# create vm (rootfs path from converter output)
+VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
+  -H 'content-type: application/json' \
+  -d '{
+    "rootfs": "/var/lib/mergen/images/nginx:alpine/rootfs.ext4",
+    "kernel": "/var/lib/mergen/base/vmlinux",
+    "vcpu": 1,
+    "memMiB": 512,
+    "ports": [{"guest": 80, "host": 0}],
+    "httpPort": 80,
+    "tags": {"app": "app1"},
+    "autoStart": false
+  }')"
 
-Forwarder behavior:
+echo "$VM_JSON"
+APPID="$(echo "$VM_JSON" | jq -r '.id')"
 
-- Listens on HTTPS `:443` by default (`FWD_HTTPS_ADDR`).
-- Terminates TLS and resolves SNI label to VM metadata.
-- Routes to `guestIP:httpPort` from VM `meta.json`.
-- Returns `502` when resolved VM has no valid `httpPort`.
+# start vm service
+sudo systemctl start "mergen@${APPID}.service"
 
-Example requests:
+# test through forwarder (uuid based)
+curl -k --resolve "${APPID}.localhost:443:127.0.0.1" "https://${APPID}.localhost/"
 
-```bash
-# HTTPS
-# subdomain by tag
-curl -k --resolve app1.localhost:443:127.0.0.1 https://app1.localhost/
-# subdomain by uuid
-curl -k --resolve <uuid>.localhost:443:127.0.0.1 https://<uuid>.localhost/
-```
+# test through forwarder (tag based)
+curl -k --resolve "app1.localhost:443:127.0.0.1" https://app1.localhost/
 
-With custom prefix/suffix:
-
-```bash
-# FWD_DOMAIN_PREFIX=vm, FWD_DOMAIN_SUFFIX=example.com
-curl -k --resolve app1.vm.example.com:443:127.0.0.1 https://app1.vm.example.com/
+# stop + delete
+curl -s -X POST "http://127.0.0.1:8080/v1/vms/${APPID}/stop"
+curl -s -X DELETE "http://127.0.0.1:8080/v1/vms/${APPID}"
 ```
 
 ## API behavior notes
