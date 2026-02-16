@@ -202,6 +202,20 @@ Optional: build a reusable BusyBox-based golden rootfs (disk0) with Buildroot:
 #   ./artifacts/golden-rootfs/golden-rootfs.ext4
 ```
 
+If you do not want to run Buildroot as root, you can create a temporary passwordless builder user and run the script with `sudo -u` from project root:
+
+```bash
+REPO_ROOT="$(pwd)"
+
+sudo useradd -m -s /bin/bash mergen-builder || true
+
+sudo -u mergen-builder -H bash -lc "cd '${REPO_ROOT}' && ./scripts/build-golden-rootfs.sh"
+
+# optional cleanup after build
+sudo pkill -u mergen-builder || true
+sudo userdel -r mergen-builder
+```
+
 Run converter:
 
 ```bash

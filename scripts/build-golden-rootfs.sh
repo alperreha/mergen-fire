@@ -268,7 +268,7 @@ else
   "payloadDevice": "/dev/vdb",
   "payloadFSType": "ext4",
   "payloadMountPoint": "/mnt/payload",
-  "payloadReadOnly": true,
+  "payloadReadOnly": false,
   "envDevice": "/dev/vdc",
   "envFSType": "ext4",
   "envMountPoint": "/mnt/env",

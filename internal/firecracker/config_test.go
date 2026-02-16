@@ -102,7 +102,7 @@ func TestRenderVMConfig_WithPayloadAndEnvDisks(t *testing.T) {
 	if cfg.Drives[0].DriveID != "rootfs" || !cfg.Drives[0].IsRootDevice {
 		t.Fatalf("unexpected rootfs drive: %#v", cfg.Drives[0])
 	}
-	if cfg.Drives[1].DriveID != "payload" || cfg.Drives[1].IsRootDevice || !cfg.Drives[1].IsReadOnly {
+	if cfg.Drives[1].DriveID != "payload" || cfg.Drives[1].IsRootDevice || cfg.Drives[1].IsReadOnly {
 		t.Fatalf("unexpected payload drive: %#v", cfg.Drives[1])
 	}
 	if cfg.Drives[2].DriveID != "env" || cfg.Drives[2].IsRootDevice || !cfg.Drives[2].IsReadOnly {

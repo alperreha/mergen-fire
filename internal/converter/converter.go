@@ -202,7 +202,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		PayloadDevice:     "/dev/vdb",
 		PayloadFSType:     "ext4",
 		PayloadMountPoint: "/mnt/payload",
-			PayloadReadOnly:   true,
+		PayloadReadOnly:   false,
 		EnvDevice:         "/dev/vdc",
 		EnvFSType:         "ext4",
 		EnvMountPoint:     "/mnt/env",

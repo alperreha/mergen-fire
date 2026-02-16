@@ -32,7 +32,7 @@ func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMCo
 			DriveID:      "payload",
 			PathOnHost:   req.PayloadDisk,
 			IsRootDevice: false,
-			IsReadOnly:   true,
+			IsReadOnly:   false,
 		})
 	}
 
