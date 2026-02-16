@@ -381,7 +381,7 @@ This SNI rule applies to HTTPS listener routing.
   - `scripts/mergen-graceful-stop`
   - `scripts/mergen-net-cleanup`
 
-`mergen-jailer-start` and `mergen-configure-start` now run real Firecracker API flow (socket + config + InstanceStart). Networking scripts are still minimal and should be hardened for production (NAT/filtering/policy).
+`mergen-jailer-start` and `mergen-configure-start` now run real Firecracker API flow (socket + config + InstanceStart). `mergen-configure-start` also performs best-effort `PUT /entropy` before VM start (disable with `MGN_ENABLE_ENTROPY_DEVICE=0` if needed). Networking scripts are still minimal and should be hardened for production (NAT/filtering/policy).
 
 ## Firecracker SDK note
 

@@ -55,6 +55,32 @@ api_call() {
   rm -f "${out_file}"
 }
 
+api_call_optional() {
+  local method="${1}"
+  local path="${2}"
+  local payload="${3}"
+  local label="${4:-optional firecracker api call}"
+  local out_file
+  local status
+
+  out_file="$(mktemp)"
+  status="$(curl -sS \
+    --unix-socket "${SOCKET_PATH}" \
+    -o "${out_file}" \
+    -w "%{http_code}" \
+    -X "${method}" \
+    "http://localhost${path}" \
+    -H 'accept: application/json' \
+    -H 'content-type: application/json' \
+    -d "${payload}")"
+
+  if [[ "${status}" -lt 200 || "${status}" -ge 300 ]]; then
+    echo "${label} skipped: ${method} ${path} status=${status}" >&2
+    cat "${out_file}" >&2 || true
+  fi
+  rm -f "${out_file}"
+}
+
 derive_host_ip_from_guest() {
   local guest_ip="${1:-}"
   if [[ "${guest_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
@@ -130,6 +156,10 @@ BOOT_SOURCE="$(augment_boot_source_ip_arg "${BOOT_SOURCE}")"
 
 api_call PUT "/machine-config" "${MACHINE_CONFIG}"
 api_call PUT "/boot-source" "${BOOT_SOURCE}"
+
+if [[ "${MGN_ENABLE_ENTROPY_DEVICE:-1}" != "0" ]]; then
+  api_call_optional PUT "/entropy" "{}" "entropy device setup"
+fi
 
 while IFS= read -r drive; do
   DRIVE_ID="$(echo "${drive}" | jq -r '.drive_id // empty')"

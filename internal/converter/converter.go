@@ -31,7 +31,7 @@ const (
 	defaultSbinInitPath   = "./artifacts/sbin-init/sbin-init"
 	defaultTelemetryPath  = "./artifacts/sbin-init/mergen-telemetry"
 	defaultSupervisorPath = "./artifacts/sbin-init/mergen-supervisor"
-	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
+	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on init=/sbin/init"
 	defaultRootFSOverhead = 256
 	defaultGoldenOverhead = 64
 	defaultEnvOverhead    = 16

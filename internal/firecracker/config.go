@@ -9,7 +9,7 @@ import (
 	"github.com/alperreha/mergen-fire/internal/network"
 )
 
-const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off"
+const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on"
 const (
 	defaultGuestMask   = "255.255.255.0"
 	defaultGuestIfName = "eth0"

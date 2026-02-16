@@ -20,7 +20,7 @@ func TestRenderVMConfig_Defaults(t *testing.T) {
 	}
 
 	cfg := RenderVMConfig(req, meta)
-	expectedBootArgs := "console=ttyS0 reboot=k panic=1 pci=off ip=172.30.0.2::172.30.0.1:255.255.255.0::eth0:off"
+	expectedBootArgs := "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on ip=172.30.0.2::172.30.0.1:255.255.255.0::eth0:off"
 	if cfg.BootSource.BootArgs != expectedBootArgs {
 		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
 	}

@@ -263,7 +263,7 @@ else
   cat > "${OVERLAY_DIR}/etc/mergen/mergen.runtime.json" <<'JSON'
 {
   "image": "placeholder",
-  "bootArgs": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init",
+  "bootArgs": "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on init=/sbin/init",
   "startCmd": ["/bin/sh"],
   "payloadDevice": "/dev/vdb",
   "payloadFSType": "ext4",
