@@ -106,7 +106,7 @@ go run ./cmd/mergend
 curl -s http://127.0.0.1:8080/healthz
 ```
 
-3. Create VM:
+3. Create VM: (you can start vm after run mergend and mergen-forwarder services)
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/v1/vms \
@@ -121,6 +121,27 @@ curl -s -X POST http://127.0.0.1:8080/v1/vms \
     "tags": {"app": "app1"},
     "autoStart": false
   }'
+
+# after creation get generated uuid and set below.
+export APPID="<generated-uuid>"
+
+# start vm 
+systemctl start mergen@$APPID.service
+
+# if http ports are right. You can test with curl after forwarder is started.
+curl -k --resolve "$APPID.localhost:443:127.0.0.1" https://$APPID.localhost/
+
+# stop vm
+systemctl stop mergen@$APPID.service
+
+# debug logs
+systemctl status mergen@$APPID.service
+journalctl -u mergen@$APPID.service
+
+# delete vm
+curl -s -X POST http://127.0.0.1:8080/v1/vms/$APPID/stop
+curl -s -X DELETE http://127.0.0.1:8080/v1/vms/$CURID
+
 ```
 
 ### Systemd template install (required on Linux host)
@@ -140,7 +161,8 @@ sudo systemctl daemon-reload
 ### Generate wildcard certificate (prefix + suffix aware)
 
 ```bash
-./scripts/gen-wildcard-cert.sh ./certs
+sudo install -d -m 0755 /etc/mergen/certs
+sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
 ```
 
 Example for custom domain pattern (`*.vm.example.com`):
@@ -148,31 +170,8 @@ Example for custom domain pattern (`*.vm.example.com`):
 ```bash
 CERT_DOMAIN_PREFIX=vm \
 CERT_DOMAIN_SUFFIX=example.com \
-./scripts/gen-wildcard-cert.sh /etc/mergen/certs
+sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
 ```
-
-### Build rootfs from Docker image
-
-Generate a Firecracker-friendly rootfs bundle (`rootfs/`, `rootfs.tar`, `rootfs.ext4`) from Docker Hub image:
-
-```bash
-./scripts/build-rootfs-from-dockerhub.sh --image nginx:alpine
-```
-
-Custom output path/name/size:
-
-```bash
-./scripts/build-rootfs-from-dockerhub.sh \
-  --image redis:7 \
-  --output-dir /var/lib/mergen/base/redis \
-  --name redis-rootfs \
-  --size-mib 1024
-```
-
-Script also writes image startup metadata and an `/init` wrapper that executes image `Entrypoint + Cmd`.
-Use generated `rootfs.ext4` in `POST /v1/vms`, and set boot args to include `init=/init` for this script output.
-`mergend` now auto-appends kernel `ip=...` boot arg when VM has `guestIP` and request boot args do not include an `ip=` value.
-`scripts/mergen-configure-start` also adds this as a runtime fallback for older `vm.json` files that were created before this behavior.
 
 ### Convert image with `mergen-converter`
 
@@ -184,23 +183,21 @@ Place your custom init binary first:
 # ./artifacts/sbin-init/sbin-init
 ```
 
-Legacy (Rust/Fly snapshot source) build script is still available:
-
-```bash
-./scripts/build-sbin-init-from-fly.sh
-```
-
 Run converter:
 
 ```bash
 go run ./cmd/mergen-converter \
-  -image nginx:alpine \
-  -output-dir ./artifacts/converter/nginx-alpine
+  -image nginx:alpine
 ```
 
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
 Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
 Injected `/sbin/init` is expected to be built from `cmd/mergen-init-snapshot`.
+Default path is under `/var/lib/mergen/images`, so run with sufficient permissions (or override with `-output-dir`).
+Default output path follows image reference hierarchy under `/var/lib/mergen/images`:
+
+- `nginx:alpine` -> `/var/lib/mergen/images/nginx:alpine`
+- `ghcr.io/org/app:1.2.3` -> `/var/lib/mergen/images/ghcr.io/org/app:1.2.3`
 
 Converter outputs:
 
@@ -211,54 +208,15 @@ Converter outputs:
 - `suggested-bootargs.txt` (`init=/sbin/init`)
 - `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
 
-### Standalone Firecracker smoke test (without mergend)
-
-After generating rootfs, validate it directly with Firecracker + API:
+Delete a converted image rootfs bundle:
 
 ```bash
-sudo ./scripts/test-firecracker-rootfs.sh \
-  --kernel /var/lib/mergen/base/vmlinux \
-  --rootfs /var/lib/mergen/base/nginx/rootfs.ext4
+go run ./cmd/mergen-converter \
+  -image nginx:alpine \
+  -delete-rootfs
 ```
 
-Using existing vm.json defaults:
-
-```bash
-sudo ./scripts/test-firecracker-rootfs.sh \
-  --vm-json /etc/mergen/vm.d/<vm-id>/vm.json \
-  --guest-ip 172.30.0.2 \
-  --host-ip 172.30.0.1
-```
-
-Script creates test netns/tap, starts Firecracker in that netns, configures VM via API socket, then opens an interactive netns shell.
-Exit the shell to trigger cleanup (or use `--keep-run-dir` to keep logs).
-
-### One-shot converted rootfs smoke test
-
-Build latest stable Linux `vmlinux`, detect converted `rootfs.ext4`, and run Firecracker directly:
-
-```bash
-sudo ./scripts/smoke-test-converted-rootfs.sh
-```
-
-What this wrapper does:
-
-- Downloads latest stable kernel source from kernel.org
-- Builds `vmlinux`
-- Writes kernel to:
-  - `./artifacts/kernels/linux-<version>/vmlinux`
-  - `/var/lib/mergen/base/vmlinux`
-- Auto-detects newest `rootfs.ext4` from:
-  - `./artifacts/converter/**/rootfs.ext4`
-  - `/var/lib/mergen/base/**/rootfs.ext4` / `/var/lib/mergen/base/rootfs.ext4`
-- Executes `scripts/test-firecracker-rootfs.sh` with `init=/sbin/init`
-
-Useful options:
-
-- `--rootfs /path/rootfs.ext4`
-- `--skip-kernel-build --kernel /var/lib/mergen/base/vmlinux`
-- `--jobs 8`
-- `-- --guest-ip 172.30.0.2 --host-ip 172.30.0.1`
+Use `-output-dir` if you want to delete a non-default conversion location.
 
 ### Run TLS SNI forwarder
 
@@ -282,8 +240,10 @@ Example requests:
 
 ```bash
 # HTTPS
+# subdomain by tag
 curl -k --resolve app1.localhost:443:127.0.0.1 https://app1.localhost/
-curl -k --resolve 084604f6.localhost:443:127.0.0.1 https://084604f6.localhost/
+# subdomain by uuid
+curl -k --resolve <uuid>.localhost:443:127.0.0.1 https://<uuid>.localhost/
 ```
 
 With custom prefix/suffix:

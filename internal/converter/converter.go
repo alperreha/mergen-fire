@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	defaultOutputBase     = "./artifacts/converter"
+	defaultOutputBase     = "/var/lib/mergen/images"
 	defaultSbinInitPath   = "./artifacts/sbin-init/sbin-init"
 	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init mergen.meta=/etc/mergen/image-meta.json"
 	defaultRootFSOverhead = 256
@@ -42,6 +42,12 @@ type Options struct {
 	SbinInitPath string
 }
 
+type DeleteOptions struct {
+	Image     string
+	OutputDir string
+	Name      string
+}
+
 type Result struct {
 	Image                 string
 	OutputDir             string
@@ -54,6 +60,11 @@ type Result struct {
 	StartCommand          []string
 	SuggestedHTTPPort     int
 	BootArgs              string
+}
+
+type DeleteResult struct {
+	Image     string
+	OutputDir string
 }
 
 type Runner struct {
@@ -201,6 +212,42 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
+func (r *Runner) Delete(ctx context.Context, opts DeleteOptions) (DeleteResult, error) {
+	normalized, err := normalizeTarget(opts.Image, opts.OutputDir, opts.Name)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return DeleteResult{}, ctx.Err()
+	default:
+	}
+
+	r.logger.Info("delete rootfs requested", "image", normalized.Image, "outputDir", normalized.OutputDir)
+
+	info, err := os.Stat(normalized.OutputDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return DeleteResult{}, fmt.Errorf("rootfs output not found: %s", normalized.OutputDir)
+		}
+		return DeleteResult{}, fmt.Errorf("stat output dir: %w", err)
+	}
+	if !info.IsDir() {
+		return DeleteResult{}, fmt.Errorf("output path is not a directory: %s", normalized.OutputDir)
+	}
+
+	if err := os.RemoveAll(normalized.OutputDir); err != nil {
+		return DeleteResult{}, fmt.Errorf("delete rootfs output: %w", err)
+	}
+
+	r.logger.Info("delete rootfs completed", "image", normalized.Image, "outputDir", normalized.OutputDir)
+	return DeleteResult{
+		Image:     normalized.Image,
+		OutputDir: normalized.OutputDir,
+	}, nil
+}
+
 type normalizedOptions struct {
 	Image        string
 	OutputDir    string
@@ -210,20 +257,16 @@ type normalizedOptions struct {
 	SbinInitPath string
 }
 
+type normalizedTarget struct {
+	Image     string
+	OutputDir string
+	Name      string
+}
+
 func normalizeOptions(opts Options) (normalizedOptions, error) {
-	image := strings.TrimSpace(opts.Image)
-	if image == "" {
-		return normalizedOptions{}, errors.New("image is required")
-	}
-
-	name := strings.TrimSpace(opts.Name)
-	if name == "" {
-		name = sanitizeName(image)
-	}
-
-	outputDir := strings.TrimSpace(opts.OutputDir)
-	if outputDir == "" {
-		outputDir = filepath.Join(defaultOutputBase, name)
+	target, err := normalizeTarget(opts.Image, opts.OutputDir, opts.Name)
+	if err != nil {
+		return normalizedOptions{}, err
 	}
 
 	sbinInitPath := strings.TrimSpace(opts.SbinInitPath)
@@ -236,13 +279,101 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 	}
 
 	return normalizedOptions{
-		Image:        image,
-		OutputDir:    outputDir,
-		Name:         name,
+		Image:        target.Image,
+		OutputDir:    target.OutputDir,
+		Name:         target.Name,
 		SizeMiB:      opts.SizeMiB,
 		SkipPull:     opts.SkipPull,
 		SbinInitPath: sbinInitPath,
 	}, nil
+}
+
+func normalizeTarget(imageRaw, outputDirRaw, nameRaw string) (normalizedTarget, error) {
+	image := strings.TrimSpace(imageRaw)
+	if image == "" {
+		return normalizedTarget{}, errors.New("image is required")
+	}
+
+	name := strings.TrimSpace(nameRaw)
+	outputDir := strings.TrimSpace(outputDirRaw)
+	if outputDir == "" {
+		if name != "" {
+			name = sanitizeName(name)
+			outputDir = filepath.Join(defaultOutputBase, name)
+		} else {
+			outputDir = defaultOutputDirForImage(image)
+			name = filepath.Base(outputDir)
+		}
+	}
+	if name == "" {
+		name = filepath.Base(outputDir)
+	}
+
+	return normalizedTarget{
+		Image:     image,
+		OutputDir: filepath.Clean(outputDir),
+		Name:      name,
+	}, nil
+}
+
+func defaultOutputDirForImage(image string) string {
+	raw := strings.TrimSpace(image)
+	raw = strings.TrimPrefix(raw, "docker://")
+	raw = strings.TrimPrefix(raw, "//")
+	raw = strings.Trim(raw, "/")
+	if raw == "" {
+		return filepath.Join(defaultOutputBase, "image-rootfs")
+	}
+
+	parts := strings.Split(raw, "/")
+	safeParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		safe := sanitizePathSegment(part)
+		if safe == "" {
+			continue
+		}
+		safeParts = append(safeParts, safe)
+	}
+	if len(safeParts) == 0 {
+		safeParts = []string{"image-rootfs"}
+	}
+
+	allParts := make([]string, 0, len(safeParts)+1)
+	allParts = append(allParts, defaultOutputBase)
+	allParts = append(allParts, safeParts...)
+	return filepath.Join(allParts...)
+}
+
+func sanitizePathSegment(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '_', r == '-', r == ':', r == '@', r == '+':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+
+	out := strings.Trim(b.String(), "-.")
+	switch out {
+	case "", ".", "..":
+		return "image-rootfs"
+	default:
+		return out
+	}
 }
 
 func sanitizeName(raw string) string {
