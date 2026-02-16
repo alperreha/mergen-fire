@@ -247,6 +247,17 @@ Converter outputs:
 - `suggested-bootargs.txt` (`init=/sbin/init`)
 - `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
 
+When payload startup fails, `mergen-supervisor` emits crash diagnostics to the same `journalctl` stream:
+
+- recent payload stdout/stderr tail
+- known in-payload log file tails (`/var/log/nginx/error.log`, `/var/log/apache2/error.log`, `/usr/local/apache2/logs/error_log`, ...)
+
+Tune diagnostics size with environment variables:
+
+- `MERGEN_SUPERVISOR_STDIO_TAIL_BYTES` (default `65536`)
+- `MERGEN_SUPERVISOR_FILE_TAIL_BYTES` (default `262144`)
+- `MERGEN_SUPERVISOR_FILE_TAIL_LINES` (default `60`)
+
 Delete a converted image rootfs bundle:
 
 ```bash

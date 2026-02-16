@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -30,7 +32,19 @@ const (
 	defaultEnvMountPath     = "/mnt/env"
 	defaultEnvFile          = "mergen.env"
 	defaultPathEnv          = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	defaultTailBytes        = 64 * 1024
+	defaultFileTailBytes    = 256 * 1024
+	defaultFileTailLines    = 60
 )
+
+var defaultPayloadLogPaths = []string{
+	"/var/log/messages",
+	"/var/log/syslog",
+	"/var/log/nginx/error.log",
+	"/var/log/apache2/error.log",
+	"/usr/local/apache2/logs/error_log",
+	"/var/log/httpd/error_log",
+}
 
 type runtimeSpec struct {
 	Image             string   `json:"image"`
@@ -51,6 +65,46 @@ type runtimeSpec struct {
 	EnvMountPoint     string   `json:"envMountPoint,omitempty"`
 	EnvReadOnly       bool     `json:"envReadOnly,omitempty"`
 	EnvFile           string   `json:"envFile,omitempty"`
+	LogPaths          []string `json:"logPaths,omitempty"`
+}
+
+type payloadExitError struct {
+	ExitCode    int
+	Diagnostics string
+}
+
+func (e *payloadExitError) Error() string {
+	return fmt.Sprintf("payload exited with code %d", e.ExitCode)
+}
+
+type tailBuffer struct {
+	mu     sync.Mutex
+	maxLen int
+	buf    []byte
+}
+
+func newTailBuffer(maxLen int) *tailBuffer {
+	if maxLen <= 0 {
+		maxLen = defaultTailBytes
+	}
+	return &tailBuffer{maxLen: maxLen}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.buf = append(b.buf, p...)
+	if len(b.buf) > b.maxLen {
+		b.buf = b.buf[len(b.buf)-b.maxLen:]
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
 }
 
 func main() {
@@ -102,6 +156,14 @@ func main() {
 
 	exitCode, err := runPayload(spec, argv, env)
 	if err != nil {
+		var payloadErr *payloadExitError
+		if errors.As(err, &payloadErr) {
+			logger.Error("payload process exited with non-zero status", "exitCode", payloadErr.ExitCode)
+			if strings.TrimSpace(payloadErr.Diagnostics) != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "payload diagnostics (exit=%d):\n%s\n", payloadErr.ExitCode, payloadErr.Diagnostics)
+			}
+			os.Exit(payloadErr.ExitCode)
+		}
 		logger.Error("payload runtime failed", "error", err)
 		os.Exit(1)
 	}
@@ -303,9 +365,12 @@ func executableInPayload(payloadRoot, absPath string) bool {
 }
 
 func runPayload(spec runtimeSpec, argv []string, env map[string]string) (int, error) {
+	stdioTail := newTailBuffer(readPositiveIntEnv("MERGEN_SUPERVISOR_STDIO_TAIL_BYTES", defaultTailBytes))
+	combinedOut := io.MultiWriter(os.Stdout, stdioTail)
+
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = combinedOut
+	cmd.Stderr = combinedOut
 	cmd.Stdin = os.Stdin
 	cmd.Dir = normalizeWorkingDir(spec.WorkingDir)
 	cmd.Env = envMapToList(env)
@@ -347,16 +412,169 @@ func runPayload(spec runtimeSpec, argv []string, env map[string]string) (int, er
 			if errors.As(err, &exitErr) {
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 					if status.Exited() {
-						return status.ExitStatus(), nil
+						exitCode := status.ExitStatus()
+						diagnostics := buildCrashDiagnostics(spec, stdioTail.String())
+						return exitCode, &payloadExitError{
+							ExitCode:    exitCode,
+							Diagnostics: diagnostics,
+						}
 					}
 					if status.Signaled() {
-						return 128 + int(status.Signal()), nil
+						exitCode := 128 + int(status.Signal())
+						diagnostics := buildCrashDiagnostics(spec, stdioTail.String())
+						return exitCode, &payloadExitError{
+							ExitCode:    exitCode,
+							Diagnostics: diagnostics,
+						}
 					}
 				}
 			}
 			return 1, err
 		}
 	}
+}
+
+func buildCrashDiagnostics(spec runtimeSpec, recentOutput string) string {
+	sections := make([]string, 0, 2)
+
+	recentOutput = strings.TrimSpace(recentOutput)
+	if recentOutput != "" {
+		sections = append(sections, "recent stdout/stderr:\n"+recentOutput)
+	}
+
+	fileDiagnostics := collectPayloadFileLogTails(
+		spec.PayloadMountPoint,
+		spec.LogPaths,
+		readPositiveIntEnv("MERGEN_SUPERVISOR_FILE_TAIL_BYTES", defaultFileTailBytes),
+		readPositiveIntEnv("MERGEN_SUPERVISOR_FILE_TAIL_LINES", defaultFileTailLines),
+	)
+	fileDiagnostics = strings.TrimSpace(fileDiagnostics)
+	if fileDiagnostics != "" {
+		sections = append(sections, "known payload log files:\n"+fileDiagnostics)
+	}
+
+	return strings.TrimSpace(strings.Join(sections, "\n\n"))
+}
+
+func collectPayloadFileLogTails(payloadRoot string, extraPaths []string, maxBytes, maxLines int) string {
+	candidates := mergeLogPaths(defaultPayloadLogPaths, extraPaths)
+	var out strings.Builder
+
+	for _, guestPath := range candidates {
+		hostPath := filepath.Join(payloadRoot, strings.TrimPrefix(guestPath, "/"))
+		info, err := os.Stat(hostPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		tail, err := readFileTailLines(hostPath, maxBytes, maxLines)
+		if err != nil {
+			continue
+		}
+		tail = strings.TrimSpace(tail)
+		if tail == "" {
+			continue
+		}
+
+		if out.Len() > 0 {
+			out.WriteString("\n\n")
+		}
+		out.WriteString(guestPath)
+		out.WriteString(":\n")
+		out.WriteString(tail)
+	}
+
+	return out.String()
+}
+
+func mergeLogPaths(base, extra []string) []string {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+
+	appendPath := func(raw string) {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			return
+		}
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		path = filepath.Clean(path)
+		if path == "/" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+
+	for _, path := range base {
+		appendPath(path)
+	}
+	for _, path := range extra {
+		appendPath(path)
+	}
+	return out
+}
+
+func readFileTailLines(path string, maxBytes, maxLines int) (string, error) {
+	if maxBytes <= 0 {
+		maxBytes = defaultFileTailBytes
+	}
+	if maxLines <= 0 {
+		maxLines = defaultFileTailLines
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+
+	var start int64
+	if info.Size() > int64(maxBytes) {
+		start = info.Size() - int64(maxBytes)
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return "", err
+	}
+
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return "", err
+	}
+
+	text := strings.ReplaceAll(string(body), "\r\n", "\n")
+	if start > 0 {
+		if idx := strings.IndexByte(text, '\n'); idx >= 0 {
+			text = text[idx+1:]
+		}
+	}
+
+	lines := strings.Split(text, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), nil
+}
+
+func readPositiveIntEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func parseCredential(spec string) (uid uint32, gid uint32, ok bool) {
