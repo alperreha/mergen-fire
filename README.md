@@ -88,6 +88,7 @@ Forwarder design details: `docs/forwarder-design.md`
 - `deploy/systemd/mergen-forwarder.service`: forwarder systemd unit
 - `scripts/mergen-*`: host helper script stubs
 - `scripts/gen-wildcard-cert.sh`: self-signed wildcard TLS cert generator
+- `scripts/build-golden-rootfs.sh`: Buildroot + BusyBox based golden rootfs (disk0) builder
 
 ## Requirements
 
@@ -136,11 +137,11 @@ curl -s http://127.0.0.1:8080/healthz
 
 ### 2. Set up and run `mergen-forwarder`
 
-Generate wildcard cert into `/etc/mergen/cert`:
+Generate wildcard cert into `/etc/mergen/certs`:
 
 ```bash
-sudo install -d -m 0755 /etc/mergen/cert
-sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/cert
+sudo install -d -m 0755 /etc/mergen/certs
+sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
 ```
 
 Example for custom domain pattern (`*.vm.example.com`):
@@ -148,7 +149,7 @@ Example for custom domain pattern (`*.vm.example.com`):
 ```bash
 CERT_DOMAIN_PREFIX=vm \
 CERT_DOMAIN_SUFFIX=example.com \
-sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/cert
+sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
 ```
 
 Run forwarder:
@@ -156,8 +157,8 @@ Run forwarder:
 ```bash
 FWD_DOMAIN_PREFIX= \
 FWD_DOMAIN_SUFFIX=localhost \
-FWD_TLS_CERT_FILE=/etc/mergen/cert/wildcard.localhost.crt \
-FWD_TLS_KEY_FILE=/etc/mergen/cert/wildcard.localhost.key \
+FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt \
+FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key \
 FWD_LOG_LEVEL=debug \
 go run ./cmd/mergen-forwarder
 ```
@@ -171,19 +172,42 @@ Forwarder behavior:
 
 ### 3. Convert OCI image with `mergen-converter`
 
-Place your custom init binary first:
+Build in-guest runtime binaries first (`mergen-init`, `mergen-telemetry`, `mergen-supervisor`):
 
 ```bash
-./scripts/build-sbin-init-from-go.sh
-# or place your own binary manually at:
-# ./artifacts/sbin-init/sbin-init
+mkdir -p ./artifacts/sbin-init
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o ./artifacts/sbin-init/sbin-init ./cmd/mergen-init
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o ./artifacts/sbin-init/mergen-telemetry ./cmd/mergen-telemetry
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o ./artifacts/sbin-init/mergen-supervisor ./cmd/mergen-supervisor
+```
+
+Equivalent helper command:
+
+```bash
+./scripts/build-sbin-init-from-go.sh --goos linux --goarch amd64
+```
+
+Optional: build a reusable BusyBox-based golden rootfs (disk0) with Buildroot:
+
+```bash
+./scripts/build-golden-rootfs.sh
+# output:
+#   ./artifacts/golden-rootfs/golden-rootfs
+#   ./artifacts/golden-rootfs/golden-rootfs.ext4
 ```
 
 Run converter:
 
 ```bash
 go run ./cmd/mergen-converter \
-  -image nginx:alpine
+  -image nginx:alpine \
+  -golden-rootfs-dir ./artifacts/golden-rootfs/golden-rootfs
 ```
 
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
@@ -315,8 +339,8 @@ Environment variables:
 
 - `FWD_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
 - `FWD_NETNS_ROOT` (default `/run/netns`)
-- `FWD_TLS_CERT_FILE` (default `/etc/mergen/cert/wildcard.localhost.crt`)
-- `FWD_TLS_KEY_FILE` (default `/etc/mergen/cert/wildcard.localhost.key`)
+- `FWD_TLS_CERT_FILE` (default `/etc/mergen/certs/wildcard.localhost.crt`)
+- `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
 - `FWD_DOMAIN_PREFIX` (default empty)
 - `FWD_DOMAIN_SUFFIX` (default `localhost`)
 - `FWD_HTTPS_ADDR` (default `:443`)

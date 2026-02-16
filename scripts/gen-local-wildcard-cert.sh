@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT_DIR="${1:-/etc/mergen/cert}"
+OUT_DIR="${1:-/etc/mergen/certs}"
 CERT_DAYS="${CERT_DAYS:-3650}"
 CERT_DOMAIN_PREFIX="${CERT_DOMAIN_PREFIX:-}"
 CERT_DOMAIN_SUFFIX="${CERT_DOMAIN_SUFFIX:-localhost}"

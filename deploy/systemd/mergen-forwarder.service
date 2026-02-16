@@ -15,8 +15,8 @@ Environment=FWD_DOMAIN_SUFFIX=localhost
 Environment=FWD_HTTPS_ADDR=:443
 Environment=FWD_SHUTDOWN_TIMEOUT_SECONDS=15
 # Update cert file paths when using custom FWD_DOMAIN_PREFIX/FWD_DOMAIN_SUFFIX.
-Environment=FWD_TLS_CERT_FILE=/etc/mergen/cert/wildcard.localhost.crt
-Environment=FWD_TLS_KEY_FILE=/etc/mergen/cert/wildcard.localhost.key
+Environment=FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt
+Environment=FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key
 ExecStart=/usr/local/bin/mergen-forwarder
 Restart=on-failure
 RestartSec=1
