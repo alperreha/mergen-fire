@@ -135,31 +135,57 @@ Health check:
 curl -s http://127.0.0.1:8080/healthz
 ```
 
+Bonus 🔥 (install latest kernel): 
+
+```bash
+ARCH="$(uname -m)"
+release_url="https://github.com/firecracker-microvm/firecracker/releases"
+latest_version="$(basename "$(curl -fsSLI -o /dev/null -w '%{url_effective}' ${release_url}/latest)")"
+CI_VERSION="${latest_version%.*}"
+
+latest_kernel_key="$(curl "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-&list-type=2" \
+  | grep -oP "(firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})" \
+  | sort -V | tail -1)"
+
+sudo wget -O /var/lib/mergen/base/vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${latest_kernel_key}"
+```
+
 ### 2. Set up and run `mergen-forwarder`
 
 Generate wildcard cert into `/etc/mergen/certs`:
 
 ```bash
 sudo install -d -m 0755 /etc/mergen/certs
-sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
-```
 
-Example for custom domain pattern (`*.vm.example.com`):
+# for *.vm.example.com domain
+export FWD_DOMAIN="vm.example.com"
+export FWD_DOMAIN_CERT_DIR="/etc/mergen/certs"
 
-```bash
-CERT_DOMAIN_PREFIX=vm \
-CERT_DOMAIN_SUFFIX=example.com \
-sudo ./scripts/gen-wildcard-cert.sh /etc/mergen/certs
+export FWD_DOMAIN_CERT_DAYS=365 # 1 year
+export FWD_DOMAIN_CERT_FILE="${FWD_DOMAIN_CERT_DIR}/wildcard.${FWD_DOMAIN}.crt"
+export FWD_DOMAIN_CERT_KEY_FILE="${FWD_DOMAIN_CERT_DIR}/wildcard.${FWD_DOMAIN}.key"
+
+openssl req \
+  -x509 \
+  -newkey rsa:2048 \
+  -sha256 \
+  -nodes \
+  -days "${FWD_DOMAIN_CERT_DAYS}" \
+  -subj "/CN=*.${FWD_DOMAIN}" \
+  -addext "subjectAltName=DNS:*.${FWD_DOMAIN},DNS:${FWD_DOMAIN}" \
+  -keyout "${FWD_DOMAIN_CERT_KEY_FILE}" \
+  -out "${FWD_DOMAIN_CERT_FILE}"
 ```
 
 Run forwarder:
 
 ```bash
-FWD_DOMAIN_PREFIX= \
-FWD_DOMAIN_SUFFIX=localhost \
-FWD_TLS_CERT_FILE=/etc/mergen/certs/wildcard.localhost.crt \
-FWD_TLS_KEY_FILE=/etc/mergen/certs/wildcard.localhost.key \
-FWD_LOG_LEVEL=debug \
+# set env values before start
+export FWD_DOMAIN="vm.example.com"
+export FWD_TLS_CERT_FILE="/etc/mergen/certs/wildcard.${FWD_DOMAIN}.crt"
+export FWD_TLS_KEY_FILE="/etc/mergen/certs/wildcard.${FWD_DOMAIN}.key"
+export FWD_LOG_LEVEL=debug
+
 go run ./cmd/mergen-forwarder
 ```
 
@@ -219,8 +245,10 @@ sudo userdel -r mergen-builder
 Run converter:
 
 ```bash
+export IMAGE="nginx:alpine"
+
 go run ./cmd/mergen-converter \
-  -image nginx:alpine \
+  -image $IMAGE \
   -golden-rootfs-dir ./artifacts/golden-rootfs/golden-rootfs
 ```
 
@@ -250,8 +278,10 @@ Converter outputs:
 Delete a converted image rootfs bundle:
 
 ```bash
+export IMAGE="nginx:alpine"
+
 go run ./cmd/mergen-converter \
-  -image nginx:alpine \
+  -image $IMAGE \
   -delete-rootfs
 ```
 
@@ -261,36 +291,50 @@ Use `-output-dir` if you want to delete a non-default conversion location.
 
 ```bash
 # create vm (rootfs path from converter output)
-VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
+export IMAGE="nginx:alpine"
+export PORT=80
+export SUBDOMAIN="app1"
+export FWD_DOMAIN="vm.example.com"
+
+export VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
   -H 'content-type: application/json' \
   -d '{
-    "rootfs": "/var/lib/mergen/images/nginx:alpine/golden-rootfs.ext4",
-    "payloadDisk": "/var/lib/mergen/images/nginx:alpine/payload-rootfs.ext4",
-    "envDisk": "/var/lib/mergen/images/nginx:alpine/env-rootfs.ext4",
+    "rootfs": "/var/lib/mergen/images/$IMAGE/golden-rootfs.ext4",
+    "payloadDisk": "/var/lib/mergen/images/$IMAGE/payload-rootfs.ext4",
+    "envDisk": "/var/lib/mergen/images/$IMAGE/env-rootfs.ext4",
     "kernel": "/var/lib/mergen/base/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
-    "ports": [{"guest": 80, "host": 0}],
-    "httpPort": 80,
-    "tags": {"app": "app1"},
-    "autoStart": false
+    "ports": [{"guest": $PORT, "host": 0}],
+    "httpPort": $PORT,
+    "tags": {"app": "$SUBDOMAIN"},
+    "autoStart": false  
   }')"
 
 echo "$VM_JSON"
-APPID="$(echo "$VM_JSON" | jq -r '.id')"
+export APPID="$(echo "$VM_JSON" | jq -r '.id')"
 
 # start vm service
-sudo systemctl start "mergen@${APPID}.service"
+curl -s -X POST "http://127.0.0.1:8080/v1/vms/${APPID}/start"
 
-# test through forwarder (uuid based)
-curl -k --resolve "${APPID}.localhost:443:127.0.0.1" "https://${APPID}.localhost/"
+# check logs
+journalctl -xeu mergen@${APPID}.service
 
-# test through forwarder (tag based)
-curl -k --resolve "app1.localhost:443:127.0.0.1" https://app1.localhost/
+# TEST-1: uuid based
+curl -k --resolve "${APPID}.${FWD_DOMAIN}:443:127.0.0.1" "https://${APPID}.${FWD_DOMAIN}/"
+
+# TEST-2: tag based
+curl -k --resolve "${SUBDOMAIN}.${FWD_DOMAIN}:443:127.0.0.1" https://${SUBDOMAIN}.${FWD_DOMAIN}/
 
 # stop + delete
 curl -s -X POST "http://127.0.0.1:8080/v1/vms/${APPID}/stop"
 curl -s -X DELETE "http://127.0.0.1:8080/v1/vms/${APPID}"
+
+# if you want to run vm netns commands
+# 1 - show all available ips in netns of vm 
+sudo ip netns exec mergen-$(cut -d '-' -f 1 <<< $APPID) ip neigh show dev tap-$(cut -d '-' -f 1 <<< $APPID)
+# 2 - show ip addr in netns of vm 
+sudo ip netns exec mergen-$(cut -d '-' -f 1 <<< $APPID) ip addr show dev tap-$(cut -d '-' -f 1 <<< $APPID)
 ```
 
 ## API behavior notes
