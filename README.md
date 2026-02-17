@@ -109,7 +109,7 @@ Optional (only for legacy helper script `scripts/build-rootfs-from-dockerhub.sh`
 
 ## Quick start
 
-### 1. Run `mergend` daemon
+### 1. Run `mergend` daemon - Terminal-1
 
 Install systemd template + helper scripts (Linux host):
 
@@ -135,7 +135,7 @@ Health check:
 curl -s http://127.0.0.1:8080/healthz
 ```
 
-Bonus 🔥 (install latest kernel): 
+Install latest kernel:  
 
 ```bash
 ARCH="$(uname -m)"
@@ -150,7 +150,7 @@ latest_kernel_key="$(curl "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecra
 sudo wget -O /var/lib/mergen/base/vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${latest_kernel_key}"
 ```
 
-### 2. Set up and run `mergen-forwarder`
+### 2. Set up and run `mergen-forwarder` - Terminal-2
 
 Generate wildcard cert into `/etc/mergen/certs`:
 
@@ -196,7 +196,7 @@ Forwarder behavior:
 - Routes to `guestIP:httpPort` from VM `meta.json`.
 - Returns `502` when resolved VM has no valid `httpPort`.
 
-### 3. Convert OCI image with `mergen-converter`
+### 3. Convert OCI image with `mergen-converter` - Terminal-3
 
 Build in-guest runtime binaries first (`mergen-init`, `mergen-telemetry`, `mergen-supervisor`):
 
@@ -287,7 +287,7 @@ go run ./cmd/mergen-converter \
 
 Use `-output-dir` if you want to delete a non-default conversion location.
 
-### 4. End-to-end test with API and curl
+### 4. End-to-end test with API and curl - Terminal-4
 
 ```bash
 # create vm (rootfs path from converter output)
