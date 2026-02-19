@@ -17,7 +17,6 @@ Options:
   --jobs N                    Parallel build jobs (default: auto-detect)
   --size-mib N                golden-rootfs.ext4 size in MiB (default: 128)
   --sbin-init PATH            Path to mergen init binary (default: ./artifacts/sbin-init/sbin-init)
-  --runtime-json PATH         Optional runtime metadata JSON copied to /etc/mergen/mergen.runtime.json
   --keep-work-dir             Keep work directory after build
   --help                      Show this help
 
@@ -59,7 +58,6 @@ TARGET_ARCH="amd64"
 JOBS="$(num_jobs)"
 SIZE_MIB="128"
 SBIN_INIT="${REPO_ROOT}/artifacts/sbin-init/sbin-init"
-RUNTIME_JSON=""
 KEEP_WORK_DIR="false"
 
 while [[ $# -gt 0 ]]; do
@@ -94,10 +92,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sbin-init)
       SBIN_INIT="${2:-}"
-      shift 2
-      ;;
-    --runtime-json)
-      RUNTIME_JSON="${2:-}"
       shift 2
       ;;
     --keep-work-dir)
@@ -154,11 +148,6 @@ for f in "${SBIN_INIT}"; do
     exit 1
   fi
 done
-
-if [[ -n "${RUNTIME_JSON}" && ! -f "${RUNTIME_JSON}" ]]; then
-  echo "--runtime-json file not found: ${RUNTIME_JSON}" >&2
-  exit 1
-fi
 
 require_cmd bash
 require_cmd make
@@ -222,7 +211,6 @@ if [[ "${KEEP_WORK_DIR}" != "true" ]]; then
 fi
 
 mkdir -p "${OVERLAY_DIR}/sbin"
-mkdir -p "${OVERLAY_DIR}/etc/mergen"
 mkdir -p "${OVERLAY_DIR}/dev"
 mkdir -p "${OVERLAY_DIR}/proc"
 mkdir -p "${OVERLAY_DIR}/sys"
@@ -241,32 +229,6 @@ cp "${SBIN_INIT}" "${OVERLAY_DIR}/sbin/mergen-init"
 chmod 0755 \
   "${OVERLAY_DIR}/sbin/init" \
   "${OVERLAY_DIR}/sbin/mergen-init"
-
-if [[ -n "${RUNTIME_JSON}" ]]; then
-  cp "${RUNTIME_JSON}" "${OVERLAY_DIR}/etc/mergen/mergen.runtime.json"
-else
-  cat > "${OVERLAY_DIR}/etc/mergen/mergen.runtime.json" <<'JSON'
-{
-  "image": "placeholder",
-  "bootArgs": "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on init=/sbin/init",
-  "startCmd": ["/bin/sh"],
-  "agentDevice": "/dev/vdb",
-  "agentFSType": "ext4",
-  "agentMountPoint": "/mnt/agent",
-  "agentReadOnly": true,
-  "agentPath": "/mnt/agent/mergen-agent",
-  "payloadDevice": "/dev/vdc",
-  "payloadFSType": "ext4",
-  "payloadMountPoint": "/mnt/payload",
-  "payloadReadOnly": false,
-  "envDevice": "/dev/vdd",
-  "envFSType": "ext4",
-  "envMountPoint": "/mnt/env",
-  "envReadOnly": true,
-  "envFile": "/mnt/env/mergen.env"
-}
-JSON
-fi
 
 cat > "${DEFCONFIG_PATH}" <<EOF
 ${ARCH_SYMBOL}
@@ -308,8 +270,7 @@ fi
 
 for required in \
   "${ROOTFS_DIR}/sbin/init" \
-  "${ROOTFS_DIR}/sbin/mergen-init" \
-  "${ROOTFS_DIR}/etc/mergen/mergen.runtime.json"; do
+  "${ROOTFS_DIR}/sbin/mergen-init"; do
   if [[ ! -f "${required}" ]]; then
     echo "missing required file in golden rootfs: ${required}" >&2
     exit 1
@@ -330,7 +291,6 @@ jobs=${JOBS}
 size_mib=${SIZE_MIB}
 generated_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 sbin_init=${SBIN_INIT}
-runtime_json=${RUNTIME_JSON:-embedded-placeholder}
 rootfs_dir=${ROOTFS_DIR}
 rootfs_ext4=${EXT4_PATH}
 rootfs_ext4_sha256=${EXT4_SHA}

@@ -237,7 +237,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	if err := injectGoldenBinaries(normalized, goldenRootFSDir); err != nil {
 		return Result{}, err
 	}
-	if err := injectRuntimeMetadata(runtimePath, goldenRootFSDir); err != nil {
+	if err := injectRuntimeMetadata(runtimePath, envRootFSDir); err != nil {
 		return Result{}, err
 	}
 	if err := injectAgentBinary(normalized.AgentPath, agentRootFSDir); err != nil {
@@ -1172,19 +1172,19 @@ func injectAgentBinary(hostAgentPath, agentRootfsDir string) error {
 	return nil
 }
 
-func injectRuntimeMetadata(runtimePath, goldenDir string) error {
+func injectRuntimeMetadata(runtimePath, envDir string) error {
 	body, err := os.ReadFile(runtimePath)
 	if err != nil {
 		return fmt.Errorf("read runtime metadata: %w", err)
 	}
 
-	targetDir := filepath.Join(goldenDir, "etc", "mergen")
+	targetDir := envDir
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("prepare runtime metadata target dir: %w", err)
 	}
 	targetPath := filepath.Join(targetDir, "mergen.runtime.json")
 	if err := os.WriteFile(targetPath, body, 0o644); err != nil {
-		return fmt.Errorf("write runtime metadata to golden rootfs: %w", err)
+		return fmt.Errorf("write runtime metadata to env rootfs: %w", err)
 	}
 	return nil
 }

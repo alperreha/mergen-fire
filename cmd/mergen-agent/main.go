@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	defaultRuntimePath      = "/etc/mergen/mergen.runtime.json"
+	defaultRuntimePath      = "/mnt/env/mergen.runtime.json"
 	defaultPayloadDevice    = "/dev/vdc"
 	defaultPayloadFSType    = "ext4"
 	defaultPayloadMountPath = "/mnt/payload"
@@ -66,6 +66,12 @@ func main() {
 		runtimePath = defaultRuntimePath
 	}
 
+	bootstrap := defaultRuntimeSpec()
+	if err := mountEnvDisk(bootstrap); err != nil {
+		logger.Error("mount env disk failed", "device", bootstrap.EnvDevice, "mount", bootstrap.EnvMountPoint, "error", err)
+		os.Exit(1)
+	}
+
 	spec, err := loadRuntimeSpec(runtimePath)
 	if err != nil {
 		logger.Error("load runtime spec failed", "path", runtimePath, "error", err)
@@ -79,11 +85,6 @@ func main() {
 		logger.Error("mount payload failed", "device", spec.PayloadDevice, "mount", spec.PayloadMountPoint, "error", err)
 		os.Exit(1)
 	}
-	if err := mountEnvDisk(spec); err != nil {
-		logger.Error("mount env disk failed", "device", spec.EnvDevice, "mount", spec.EnvMountPoint, "error", err)
-		os.Exit(1)
-	}
-
 	env, err := buildRuntimeEnv(spec)
 	if err != nil {
 		logger.Error("build runtime env failed", "error", err)
@@ -115,6 +116,19 @@ func main() {
 	}
 	logger.Info("payload process exited", "exitCode", exitCode)
 	os.Exit(exitCode)
+}
+
+func defaultRuntimeSpec() runtimeSpec {
+	return runtimeSpec{
+		PayloadDevice:     defaultPayloadDevice,
+		PayloadFSType:     defaultPayloadFSType,
+		PayloadMountPoint: defaultPayloadMountPath,
+		EnvDevice:         defaultEnvDevice,
+		EnvFSType:         defaultEnvFSType,
+		EnvMountPoint:     defaultEnvMountPath,
+		EnvReadOnly:       true,
+		EnvFile:           filepath.Join(defaultEnvMountPath, defaultEnvFile),
+	}
 }
 
 func loadRuntimeSpec(path string) (runtimeSpec, error) {

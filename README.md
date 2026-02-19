@@ -271,7 +271,7 @@ Converter outputs:
 - `env-rootfs/` generated env filesystem
 - `env-rootfs.ext4` (disk3)
 - `image-meta.json` (entrypoint/cmd/env/startCmd metadata from image)
-- `mergen.runtime.json` (agent runtime spec consumed in guest)
+- `mergen.runtime.json` (agent runtime spec placed into env disk and consumed from `/mnt/env/mergen.runtime.json`)
 - `suggested-bootargs.txt` (`init=/sbin/init`)
 - `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
 

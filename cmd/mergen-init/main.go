@@ -25,7 +25,7 @@ import (
 const (
 	defaultMetaPath      = "/etc/mergen/image-meta.json"
 	defaultFlyRunPath    = "/fly/run.json"
-	defaultRuntimePath   = "/etc/mergen/mergen.runtime.json"
+	defaultRuntimePath   = "/mnt/env/mergen.runtime.json"
 	defaultAgentDevice   = "/dev/vdb"
 	defaultAgentFSType   = "ext4"
 	defaultAgentMount    = "/mnt/agent"
@@ -81,15 +81,7 @@ type initRuntimeSpec struct {
 	AgentPath       string
 }
 
-type initRuntimeSpecFile struct {
-	AgentDevice     string `json:"agentDevice,omitempty"`
-	AgentFSType     string `json:"agentFSType,omitempty"`
-	AgentMountPoint string `json:"agentMountPoint,omitempty"`
-	AgentReadOnly   *bool  `json:"agentReadOnly,omitempty"`
-	AgentPath       string `json:"agentPath,omitempty"`
-}
-
-func loadInitRuntimeSpec(logger *slog.Logger) initRuntimeSpec {
+func loadInitRuntimeSpec(_ *slog.Logger) initRuntimeSpec {
 	spec := initRuntimeSpec{
 		AgentDevice:     defaultAgentDevice,
 		AgentFSType:     defaultAgentFSType,
@@ -98,34 +90,22 @@ func loadInitRuntimeSpec(logger *slog.Logger) initRuntimeSpec {
 		AgentPath:       defaultAgentExecPath,
 	}
 
-	body, err := os.ReadFile(defaultRuntimePath)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			logger.Warn("read runtime metadata failed, using defaults", "path", defaultRuntimePath, "error", err)
-		}
-		return spec
-	}
-
-	var fileSpec initRuntimeSpecFile
-	if err := json.Unmarshal(body, &fileSpec); err != nil {
-		logger.Warn("decode runtime metadata failed, using defaults", "path", defaultRuntimePath, "error", err)
-		return spec
-	}
-
-	if s := strings.TrimSpace(fileSpec.AgentDevice); s != "" {
+	if s := strings.TrimSpace(os.Getenv("MERGEN_AGENT_DEVICE")); s != "" {
 		spec.AgentDevice = s
 	}
-	if s := strings.TrimSpace(fileSpec.AgentFSType); s != "" {
+	if s := strings.TrimSpace(os.Getenv("MERGEN_AGENT_FSTYPE")); s != "" {
 		spec.AgentFSType = s
 	}
-	if s := strings.TrimSpace(fileSpec.AgentMountPoint); s != "" {
+	if s := strings.TrimSpace(os.Getenv("MERGEN_AGENT_MOUNT")); s != "" {
 		spec.AgentMountPoint = s
 	}
-	if s := strings.TrimSpace(fileSpec.AgentPath); s != "" {
+	if s := strings.TrimSpace(os.Getenv("MERGEN_AGENT_PATH")); s != "" {
 		spec.AgentPath = s
 	}
-	if fileSpec.AgentReadOnly != nil {
-		spec.AgentReadOnly = *fileSpec.AgentReadOnly
+	if s := strings.TrimSpace(os.Getenv("MERGEN_AGENT_READ_ONLY")); s != "" {
+		if parsed, err := strconv.ParseBool(s); err == nil {
+			spec.AgentReadOnly = parsed
+		}
 	}
 	return spec
 }
