@@ -17,8 +17,6 @@ Options:
   --jobs N                    Parallel build jobs (default: auto-detect)
   --size-mib N                golden-rootfs.ext4 size in MiB (default: 128)
   --sbin-init PATH            Path to mergen init binary (default: ./artifacts/sbin-init/sbin-init)
-  --sbin-telemetry PATH       Path to mergen telemetry binary (default: ./artifacts/sbin-init/mergen-telemetry)
-  --sbin-supervisor PATH      Path to mergen supervisor binary (default: ./artifacts/sbin-init/mergen-supervisor)
   --runtime-json PATH         Optional runtime metadata JSON copied to /etc/mergen/mergen.runtime.json
   --keep-work-dir             Keep work directory after build
   --help                      Show this help
@@ -61,8 +59,6 @@ TARGET_ARCH="amd64"
 JOBS="$(num_jobs)"
 SIZE_MIB="128"
 SBIN_INIT="${REPO_ROOT}/artifacts/sbin-init/sbin-init"
-SBIN_TELEMETRY="${REPO_ROOT}/artifacts/sbin-init/mergen-telemetry"
-SBIN_SUPERVISOR="${REPO_ROOT}/artifacts/sbin-init/mergen-supervisor"
 RUNTIME_JSON=""
 KEEP_WORK_DIR="false"
 
@@ -98,14 +94,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sbin-init)
       SBIN_INIT="${2:-}"
-      shift 2
-      ;;
-    --sbin-telemetry)
-      SBIN_TELEMETRY="${2:-}"
-      shift 2
-      ;;
-    --sbin-supervisor)
-      SBIN_SUPERVISOR="${2:-}"
       shift 2
       ;;
     --runtime-json)
@@ -159,7 +147,7 @@ case "${TARGET_ARCH}" in
     ;;
 esac
 
-for f in "${SBIN_INIT}" "${SBIN_TELEMETRY}" "${SBIN_SUPERVISOR}"; do
+for f in "${SBIN_INIT}"; do
   if [[ ! -f "${f}" ]]; then
     echo "required binary not found: ${f}" >&2
     echo "hint: run scripts/build-sbin-init-from-go.sh first" >&2
@@ -242,6 +230,7 @@ mkdir -p "${OVERLAY_DIR}/run"
 mkdir -p "${OVERLAY_DIR}/run/lock"
 mkdir -p "${OVERLAY_DIR}/tmp"
 mkdir -p "${OVERLAY_DIR}/var"
+mkdir -p "${OVERLAY_DIR}/mnt/agent"
 mkdir -p "${OVERLAY_DIR}/mnt/payload"
 mkdir -p "${OVERLAY_DIR}/mnt/env"
 
@@ -249,13 +238,9 @@ chmod 1777 "${OVERLAY_DIR}/tmp"
 
 cp "${SBIN_INIT}" "${OVERLAY_DIR}/sbin/init"
 cp "${SBIN_INIT}" "${OVERLAY_DIR}/sbin/mergen-init"
-cp "${SBIN_TELEMETRY}" "${OVERLAY_DIR}/sbin/mergen-telemetry"
-cp "${SBIN_SUPERVISOR}" "${OVERLAY_DIR}/sbin/mergen-supervisor"
 chmod 0755 \
   "${OVERLAY_DIR}/sbin/init" \
-  "${OVERLAY_DIR}/sbin/mergen-init" \
-  "${OVERLAY_DIR}/sbin/mergen-telemetry" \
-  "${OVERLAY_DIR}/sbin/mergen-supervisor"
+  "${OVERLAY_DIR}/sbin/mergen-init"
 
 if [[ -n "${RUNTIME_JSON}" ]]; then
   cp "${RUNTIME_JSON}" "${OVERLAY_DIR}/etc/mergen/mergen.runtime.json"
@@ -265,11 +250,16 @@ else
   "image": "placeholder",
   "bootArgs": "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on init=/sbin/init",
   "startCmd": ["/bin/sh"],
-  "payloadDevice": "/dev/vdb",
+  "agentDevice": "/dev/vdb",
+  "agentFSType": "ext4",
+  "agentMountPoint": "/mnt/agent",
+  "agentReadOnly": true,
+  "agentPath": "/mnt/agent/mergen-agent",
+  "payloadDevice": "/dev/vdc",
   "payloadFSType": "ext4",
   "payloadMountPoint": "/mnt/payload",
   "payloadReadOnly": false,
-  "envDevice": "/dev/vdc",
+  "envDevice": "/dev/vdd",
   "envFSType": "ext4",
   "envMountPoint": "/mnt/env",
   "envReadOnly": true,
@@ -319,8 +309,6 @@ fi
 for required in \
   "${ROOTFS_DIR}/sbin/init" \
   "${ROOTFS_DIR}/sbin/mergen-init" \
-  "${ROOTFS_DIR}/sbin/mergen-telemetry" \
-  "${ROOTFS_DIR}/sbin/mergen-supervisor" \
   "${ROOTFS_DIR}/etc/mergen/mergen.runtime.json"; do
   if [[ ! -f "${required}" ]]; then
     echo "missing required file in golden rootfs: ${required}" >&2
@@ -342,8 +330,6 @@ jobs=${JOBS}
 size_mib=${SIZE_MIB}
 generated_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 sbin_init=${SBIN_INIT}
-sbin_telemetry=${SBIN_TELEMETRY}
-sbin_supervisor=${SBIN_SUPERVISOR}
 runtime_json=${RUNTIME_JSON:-embedded-placeholder}
 rootfs_dir=${ROOTFS_DIR}
 rootfs_ext4=${EXT4_PATH}

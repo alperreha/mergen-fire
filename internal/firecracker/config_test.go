@@ -80,10 +80,11 @@ func TestRenderVMConfig_NoGuestIPKeepsDefaultBootArgs(t *testing.T) {
 	}
 }
 
-func TestRenderVMConfig_WithPayloadAndEnvDisks(t *testing.T) {
+func TestRenderVMConfig_WithAgentPayloadAndEnvDisks(t *testing.T) {
 	req := model.CreateVMRequest{
 		RootFS:      "/var/lib/mergen/golden-rootfs.ext4",
 		Kernel:      "/var/lib/mergen/vmlinux",
+		AgentDisk:   "/var/lib/mergen/agent.ext4",
 		PayloadDisk: "/var/lib/mergen/payload.ext4",
 		EnvDisk:     "/var/lib/mergen/env.ext4",
 		VCPU:        1,
@@ -96,16 +97,19 @@ func TestRenderVMConfig_WithPayloadAndEnvDisks(t *testing.T) {
 	}
 
 	cfg := RenderVMConfig(req, meta)
-	if len(cfg.Drives) != 3 {
-		t.Fatalf("expected 3 drives, got %d", len(cfg.Drives))
+	if len(cfg.Drives) != 4 {
+		t.Fatalf("expected 4 drives, got %d", len(cfg.Drives))
 	}
 	if cfg.Drives[0].DriveID != "rootfs" || !cfg.Drives[0].IsRootDevice {
 		t.Fatalf("unexpected rootfs drive: %#v", cfg.Drives[0])
 	}
-	if cfg.Drives[1].DriveID != "payload" || cfg.Drives[1].IsRootDevice || cfg.Drives[1].IsReadOnly {
-		t.Fatalf("unexpected payload drive: %#v", cfg.Drives[1])
+	if cfg.Drives[1].DriveID != "agent" || cfg.Drives[1].IsRootDevice || !cfg.Drives[1].IsReadOnly {
+		t.Fatalf("unexpected agent drive: %#v", cfg.Drives[1])
 	}
-	if cfg.Drives[2].DriveID != "env" || cfg.Drives[2].IsRootDevice || !cfg.Drives[2].IsReadOnly {
-		t.Fatalf("unexpected env drive: %#v", cfg.Drives[2])
+	if cfg.Drives[2].DriveID != "payload" || cfg.Drives[2].IsRootDevice || cfg.Drives[2].IsReadOnly {
+		t.Fatalf("unexpected payload drive: %#v", cfg.Drives[2])
+	}
+	if cfg.Drives[3].DriveID != "env" || cfg.Drives[3].IsRootDevice || !cfg.Drives[3].IsReadOnly {
+		t.Fatalf("unexpected env drive: %#v", cfg.Drives[3])
 	}
 }

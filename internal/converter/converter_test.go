@@ -255,6 +255,7 @@ func TestWriteSuggestedVMRequestIncludesPayloadAndEnvDisks(t *testing.T) {
 		outputPath,
 		"nginx:alpine",
 		"/var/lib/mergen/images/nginx/golden-rootfs.ext4",
+		"/var/lib/mergen/images/nginx/agent-rootfs.ext4",
 		"/var/lib/mergen/images/nginx/payload-rootfs.ext4",
 		"/var/lib/mergen/images/nginx/env-rootfs.ext4",
 		8080,
@@ -272,6 +273,9 @@ func TestWriteSuggestedVMRequestIncludesPayloadAndEnvDisks(t *testing.T) {
 		t.Fatalf("decode suggested vm request: %v", err)
 	}
 
+	if got := payload["agentDisk"]; got != "/var/lib/mergen/images/nginx/agent-rootfs.ext4" {
+		t.Fatalf("agentDisk mismatch: got %#v", got)
+	}
 	if got := payload["payloadDisk"]; got != "/var/lib/mergen/images/nginx/payload-rootfs.ext4" {
 		t.Fatalf("payloadDisk mismatch: got %#v", got)
 	}

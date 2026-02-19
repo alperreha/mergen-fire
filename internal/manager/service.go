@@ -78,6 +78,12 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 		s.logger.Debug("create vm kernel validation failed", "path", req.Kernel, "error", err)
 		return "", fmt.Errorf("%w: kernel %v", ErrInvalidRequest, err)
 	}
+	if strings.TrimSpace(req.AgentDisk) != "" {
+		if err := validatePathExists(req.AgentDisk); err != nil {
+			s.logger.Debug("create vm agent disk validation failed", "path", req.AgentDisk, "error", err)
+			return "", fmt.Errorf("%w: agentDisk %v", ErrInvalidRequest, err)
+		}
+	}
 	if strings.TrimSpace(req.DataDisk) != "" {
 		if err := validatePathExists(req.DataDisk); err != nil {
 			s.logger.Debug("create vm data disk validation failed", "path", req.DataDisk, "error", err)
@@ -119,6 +125,7 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 		CreatedAt:   time.Now().UTC(),
 		RootFS:      req.RootFS,
 		Kernel:      req.Kernel,
+		AgentDisk:   req.AgentDisk,
 		PayloadDisk: req.PayloadDisk,
 		DataDisk:    req.DataDisk,
 		EnvDisk:     req.EnvDisk,
@@ -481,6 +488,15 @@ func validateCreate(req model.CreateVMRequest) error {
 	}
 	if strings.TrimSpace(req.Kernel) == "" {
 		return errors.New("kernel is required")
+	}
+	if strings.TrimSpace(req.AgentDisk) == "" {
+		return errors.New("agentDisk is required")
+	}
+	if strings.TrimSpace(req.PayloadDisk) == "" {
+		return errors.New("payloadDisk is required")
+	}
+	if strings.TrimSpace(req.EnvDisk) == "" {
+		return errors.New("envDisk is required")
 	}
 	if req.VCPU <= 0 {
 		return errors.New("vcpu must be > 0")

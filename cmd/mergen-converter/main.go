@@ -12,32 +12,32 @@ import (
 
 func main() {
 	var (
-		image          string
-		outputDir      string
-		name           string
-		sizeMiB        int
-		skipPull       bool
-		deleteRootFS   bool
-		sbinInitPath   string
-		telemetryPath  string
-		supervisorPath string
-		goldenRootFS   string
-		goldenSizeMiB  int
-		envSizeMiB     int
-		envLine        string
-		logLevel       string
-		logFormat      string
+		image         string
+		outputDir     string
+		name          string
+		sizeMiB       int
+		agentSizeMiB  int
+		skipPull      bool
+		deleteRootFS  bool
+		sbinInitPath  string
+		agentPath     string
+		goldenRootFS  string
+		goldenSizeMiB int
+		envSizeMiB    int
+		envLine       string
+		logLevel      string
+		logFormat     string
 	)
 
 	flag.StringVar(&image, "image", "", "Docker/OCI image reference (required), e.g. nginx:alpine")
 	flag.StringVar(&outputDir, "output-dir", "", "Output directory (default: /var/lib/mergen/images/<image-ref>)")
 	flag.StringVar(&name, "name", "", "Output name (used when output-dir is empty)")
 	flag.IntVar(&sizeMiB, "size-mib", 0, "Payload ext4 image size in MiB (0 = auto)")
+	flag.IntVar(&agentSizeMiB, "agent-size-mib", 0, "Agent ext4 image size in MiB (0 = auto/minimum)")
 	flag.BoolVar(&skipPull, "skip-pull", false, "Skip remote pull and reuse previously cached image blobs in output-dir/image-cache")
 	flag.BoolVar(&deleteRootFS, "delete-rootfs", false, "Delete converted rootfs output for the selected image and exit")
 	flag.StringVar(&sbinInitPath, "sbin-init", "./artifacts/sbin-init/sbin-init", "Path to mergen-init binary copied into golden rootfs (/sbin/init)")
-	flag.StringVar(&telemetryPath, "sbin-telemetry", "./artifacts/sbin-init/mergen-telemetry", "Path to mergen-telemetry binary copied into golden rootfs")
-	flag.StringVar(&supervisorPath, "sbin-supervisor", "./artifacts/sbin-init/mergen-supervisor", "Path to mergen-supervisor binary copied into golden rootfs")
+	flag.StringVar(&agentPath, "sbin-agent", "./artifacts/sbin-init/mergen-agent", "Path to mergen-agent binary copied into agent disk")
 	flag.StringVar(&goldenRootFS, "golden-rootfs-dir", "", "Optional base golden rootfs directory to copy before injecting binaries/runtime metadata")
 	flag.IntVar(&goldenSizeMiB, "golden-size-mib", 0, "Golden rootfs ext4 size in MiB (0 = auto/minimum)")
 	flag.IntVar(&envSizeMiB, "env-size-mib", 0, "Env disk ext4 size in MiB (0 = auto/minimum)")
@@ -73,18 +73,18 @@ func main() {
 	}
 
 	result, err := runner.Run(context.Background(), converter.Options{
-		Image:          image,
-		OutputDir:      outputDir,
-		Name:           name,
-		SizeMiB:        sizeMiB,
-		SkipPull:       skipPull,
-		SbinInitPath:   sbinInitPath,
-		TelemetryPath:  telemetryPath,
-		SupervisorPath: supervisorPath,
-		GoldenRootFS:   goldenRootFS,
-		GoldenSizeMiB:  goldenSizeMiB,
-		EnvSizeMiB:     envSizeMiB,
-		EnvLine:        envLine,
+		Image:         image,
+		OutputDir:     outputDir,
+		Name:          name,
+		SizeMiB:       sizeMiB,
+		AgentSizeMiB:  agentSizeMiB,
+		SkipPull:      skipPull,
+		SbinInitPath:  sbinInitPath,
+		AgentPath:     agentPath,
+		GoldenRootFS:  goldenRootFS,
+		GoldenSizeMiB: goldenSizeMiB,
+		EnvSizeMiB:    envSizeMiB,
+		EnvLine:       envLine,
 	})
 	if err != nil {
 		logger.Error("conversion failed", "error", err)
@@ -97,11 +97,14 @@ func main() {
 	_, _ = fmt.Fprintf(os.Stdout, "golden rootfs dir: %s\n", result.RootFSDir)
 	_, _ = fmt.Fprintf(os.Stdout, "golden rootfs tar: %s\n", result.RootFSTarPath)
 	_, _ = fmt.Fprintf(os.Stdout, "golden rootfs ext4 (disk0): %s\n", result.RootFSExt4Path)
+	_, _ = fmt.Fprintf(os.Stdout, "agent rootfs dir: %s\n", result.AgentRootFSDir)
+	_, _ = fmt.Fprintf(os.Stdout, "agent rootfs tar: %s\n", result.AgentRootFSTarPath)
+	_, _ = fmt.Fprintf(os.Stdout, "agent rootfs ext4 (disk1): %s\n", result.AgentRootFSExt4Path)
 	_, _ = fmt.Fprintf(os.Stdout, "payload rootfs dir: %s\n", result.PayloadRootFSDir)
 	_, _ = fmt.Fprintf(os.Stdout, "payload rootfs tar: %s\n", result.PayloadRootFSTarPath)
-	_, _ = fmt.Fprintf(os.Stdout, "payload rootfs ext4 (disk1): %s\n", result.PayloadRootFSExt4Path)
+	_, _ = fmt.Fprintf(os.Stdout, "payload rootfs ext4 (disk2): %s\n", result.PayloadRootFSExt4Path)
 	_, _ = fmt.Fprintf(os.Stdout, "env rootfs dir: %s\n", result.EnvRootFSDir)
-	_, _ = fmt.Fprintf(os.Stdout, "env rootfs ext4 (disk2): %s\n", result.EnvRootFSExt4Path)
+	_, _ = fmt.Fprintf(os.Stdout, "env rootfs ext4 (disk3): %s\n", result.EnvRootFSExt4Path)
 	_, _ = fmt.Fprintf(os.Stdout, "runtime metadata: %s\n", result.RuntimePath)
 	_, _ = fmt.Fprintf(os.Stdout, "env file: %s\n", result.EnvFilePath)
 	_, _ = fmt.Fprintf(os.Stdout, "image metadata: %s\n", result.MetadataPath)

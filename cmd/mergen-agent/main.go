@@ -4,6 +4,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,20 +18,23 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
 const (
 	defaultRuntimePath      = "/etc/mergen/mergen.runtime.json"
-	defaultPayloadDevice    = "/dev/vdb"
+	defaultPayloadDevice    = "/dev/vdc"
 	defaultPayloadFSType    = "ext4"
 	defaultPayloadMountPath = "/mnt/payload"
-	defaultEnvDevice        = "/dev/vdc"
+	defaultEnvDevice        = "/dev/vdd"
 	defaultEnvFSType        = "ext4"
 	defaultEnvMountPath     = "/mnt/env"
 	defaultEnvFile          = "mergen.env"
 	defaultPathEnv          = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+	defaultTelemetryIntervalSeconds = 10
 )
 
 type runtimeSpec struct {
@@ -66,6 +71,9 @@ func main() {
 		logger.Error("load runtime spec failed", "path", runtimePath, "error", err)
 		os.Exit(1)
 	}
+
+	stopTelemetry := startTelemetry(logger)
+	defer stopTelemetry()
 
 	if err := mountPayload(spec); err != nil {
 		logger.Error("mount payload failed", "device", spec.PayloadDevice, "mount", spec.PayloadMountPoint, "error", err)
@@ -410,4 +418,68 @@ func defaultIfEmpty(in, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(in)
+}
+
+func startTelemetry(logger *slog.Logger) func() {
+	interval := readTelemetryInterval()
+	logger.Info("mergen agent telemetry started", "interval", interval.String())
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		publishTelemetry(logger)
+		for {
+			select {
+			case <-ticker.C:
+				publishTelemetry(logger)
+			case <-stopCh:
+				logger.Info("mergen agent telemetry stopped")
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(stopCh)
+		<-doneCh
+	}
+}
+
+func readTelemetryInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("MERGEN_AGENT_TELEMETRY_INTERVAL_SECONDS"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MERGEN_TELEMETRY_INTERVAL_SECONDS"))
+	}
+	if raw == "" {
+		return defaultTelemetryIntervalSeconds * time.Second
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return defaultTelemetryIntervalSeconds * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func publishTelemetry(logger *slog.Logger) {
+	label := randomLabel(8)
+	logger.Info(
+		"mergen agent heartbeat",
+		"time", time.Now().UTC().Format(time.RFC3339Nano),
+		"label", label,
+	)
+}
+
+func randomLabel(byteLen int) string {
+	if byteLen <= 0 {
+		byteLen = 8
+	}
+	buf := make([]byte, byteLen)
+	if _, err := rand.Read(buf); err != nil {
+		return "fallback-random"
+	}
+	return hex.EncodeToString(buf)
 }

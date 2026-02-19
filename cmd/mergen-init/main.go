@@ -23,11 +23,13 @@ import (
 )
 
 const (
-	defaultMetaPath       = "/etc/mergen/image-meta.json"
-	defaultFlyRunPath     = "/fly/run.json"
-	defaultRuntimePath    = "/etc/mergen/mergen.runtime.json"
-	defaultSupervisorPath = "/sbin/mergen-supervisor"
-	defaultTelemetryPath  = "/sbin/mergen-telemetry"
+	defaultMetaPath      = "/etc/mergen/image-meta.json"
+	defaultFlyRunPath    = "/fly/run.json"
+	defaultRuntimePath   = "/etc/mergen/mergen.runtime.json"
+	defaultAgentDevice   = "/dev/vdb"
+	defaultAgentFSType   = "ext4"
+	defaultAgentMount    = "/mnt/agent"
+	defaultAgentExecPath = "/mnt/agent/mergen-agent"
 )
 
 func main() {
@@ -49,13 +51,12 @@ func run(logger *slog.Logger) (int, error) {
 		return 1, err
 	}
 
-	telemetryCmd, err := startTelemetrySidecar(logger)
-	if err != nil {
-		logger.Warn("telemetry sidecar start failed", "path", defaultTelemetryPath, "error", err)
+	initSpec := loadInitRuntimeSpec(logger)
+	if err := mountAgentDisk(initSpec, logger); err != nil {
+		return 1, err
 	}
-	defer stopTelemetrySidecar(telemetryCmd, logger)
 
-	spec, source, err := loadPrimaryStartSpec()
+	spec, source, err := loadPrimaryStartSpec(initSpec)
 	if err != nil {
 		return 1, err
 	}
@@ -72,53 +73,97 @@ func run(logger *slog.Logger) (int, error) {
 	return code, nil
 }
 
-func loadPrimaryStartSpec() (startSpec, string, error) {
-	if fileExists(defaultSupervisorPath) {
-		env := currentEnvMap()
-		if strings.TrimSpace(env["MERGEN_RUNTIME_PATH"]) == "" {
-			env["MERGEN_RUNTIME_PATH"] = defaultRuntimePath
+type initRuntimeSpec struct {
+	AgentDevice     string
+	AgentFSType     string
+	AgentMountPoint string
+	AgentReadOnly   bool
+	AgentPath       string
+}
+
+type initRuntimeSpecFile struct {
+	AgentDevice     string `json:"agentDevice,omitempty"`
+	AgentFSType     string `json:"agentFSType,omitempty"`
+	AgentMountPoint string `json:"agentMountPoint,omitempty"`
+	AgentReadOnly   *bool  `json:"agentReadOnly,omitempty"`
+	AgentPath       string `json:"agentPath,omitempty"`
+}
+
+func loadInitRuntimeSpec(logger *slog.Logger) initRuntimeSpec {
+	spec := initRuntimeSpec{
+		AgentDevice:     defaultAgentDevice,
+		AgentFSType:     defaultAgentFSType,
+		AgentMountPoint: defaultAgentMount,
+		AgentReadOnly:   true,
+		AgentPath:       defaultAgentExecPath,
+	}
+
+	body, err := os.ReadFile(defaultRuntimePath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logger.Warn("read runtime metadata failed, using defaults", "path", defaultRuntimePath, "error", err)
 		}
-		return startSpec{
-			Argv:       []string{defaultSupervisorPath},
-			Env:        env,
-			User:       "0:0",
-			WorkingDir: "/",
-		}, defaultSupervisorPath, nil
+		return spec
 	}
 
-	return loadStartSpec()
+	var fileSpec initRuntimeSpecFile
+	if err := json.Unmarshal(body, &fileSpec); err != nil {
+		logger.Warn("decode runtime metadata failed, using defaults", "path", defaultRuntimePath, "error", err)
+		return spec
+	}
+
+	if s := strings.TrimSpace(fileSpec.AgentDevice); s != "" {
+		spec.AgentDevice = s
+	}
+	if s := strings.TrimSpace(fileSpec.AgentFSType); s != "" {
+		spec.AgentFSType = s
+	}
+	if s := strings.TrimSpace(fileSpec.AgentMountPoint); s != "" {
+		spec.AgentMountPoint = s
+	}
+	if s := strings.TrimSpace(fileSpec.AgentPath); s != "" {
+		spec.AgentPath = s
+	}
+	if fileSpec.AgentReadOnly != nil {
+		spec.AgentReadOnly = *fileSpec.AgentReadOnly
+	}
+	return spec
 }
 
-func startTelemetrySidecar(logger *slog.Logger) (*exec.Cmd, error) {
-	if !fileExists(defaultTelemetryPath) {
-		logger.Debug("telemetry sidecar not found, skipping", "path", defaultTelemetryPath)
-		return nil, nil
+func mountAgentDisk(spec initRuntimeSpec, logger *slog.Logger) error {
+	if strings.TrimSpace(spec.AgentDevice) == "" {
+		return errors.New("agent device is empty")
+	}
+	if err := os.MkdirAll(spec.AgentMountPoint, 0o755); err != nil {
+		return fmt.Errorf("prepare agent mount path %s: %w", spec.AgentMountPoint, err)
 	}
 
-	cmd := exec.Command(defaultTelemetryPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	flags := uintptr(unix.MS_RELATIME)
+	if spec.AgentReadOnly {
+		flags |= uintptr(unix.MS_RDONLY)
 	}
-
-	logger.Info("telemetry sidecar started", "path", defaultTelemetryPath, "pid", cmd.Process.Pid)
-	return cmd, nil
+	if err := mountIfNeeded(spec.AgentDevice, spec.AgentMountPoint, spec.AgentFSType, flags, ""); err != nil {
+		return fmt.Errorf("mount agent disk %s on %s: %w", spec.AgentDevice, spec.AgentMountPoint, err)
+	}
+	logger.Info("agent disk mounted", "device", spec.AgentDevice, "mount", spec.AgentMountPoint, "readOnly", spec.AgentReadOnly)
+	return nil
 }
 
-func stopTelemetrySidecar(cmd *exec.Cmd, logger *slog.Logger) {
-	if cmd == nil || cmd.Process == nil {
-		return
+func loadPrimaryStartSpec(initSpec initRuntimeSpec) (startSpec, string, error) {
+	if !fileExists(initSpec.AgentPath) {
+		return startSpec{}, "", fmt.Errorf("agent binary not found at %s", initSpec.AgentPath)
 	}
 
-	pid := cmd.Process.Pid
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		logger.Debug("signal telemetry sidecar process group failed", "pid", pid, "error", err)
+	env := currentEnvMap()
+	if strings.TrimSpace(env["MERGEN_RUNTIME_PATH"]) == "" {
+		env["MERGEN_RUNTIME_PATH"] = defaultRuntimePath
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		logger.Debug("signal telemetry sidecar process failed", "pid", pid, "error", err)
-	}
+	return startSpec{
+		Argv:       []string{initSpec.AgentPath},
+		Env:        env,
+		User:       "0:0",
+		WorkingDir: "/",
+	}, initSpec.AgentPath, nil
 }
 
 func currentEnvMap() map[string]string {

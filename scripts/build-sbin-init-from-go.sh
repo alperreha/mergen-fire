@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'HELP'
-Build Go-based mergen init binaries and place them into artifacts for mergen-converter.
+Build Go-based mergen init/agent binaries and place them into artifacts for mergen-converter.
 
 Usage:
   build-sbin-init-from-go.sh [options]
@@ -116,7 +116,7 @@ else
   LDFLAGS_COMBINED="${BASE_LDFLAGS}"
 fi
 
-echo "building cmd/mergen-init (+ telemetry + supervisor)"
+echo "building cmd/mergen-init (+ agent)"
 echo "  target: ${TARGET_GOOS}/${TARGET_GOARCH}"
 echo "  cgo:    ${CGO_VALUE}"
 echo "  go:     ${GO_BIN}"
@@ -133,13 +133,11 @@ build_cmd() {
 (
   cd "${REPO_ROOT}"
   build_cmd ./cmd/mergen-init "${OUTPUT_PATH}"
-  build_cmd ./cmd/mergen-telemetry "${OUTPUT_DIR}/mergen-telemetry"
-  build_cmd ./cmd/mergen-supervisor "${OUTPUT_DIR}/mergen-supervisor"
+  build_cmd ./cmd/mergen-agent "${OUTPUT_DIR}/mergen-agent"
 )
 
 chmod +x "${OUTPUT_PATH}"
-chmod +x "${OUTPUT_DIR}/mergen-telemetry"
-chmod +x "${OUTPUT_DIR}/mergen-supervisor"
+chmod +x "${OUTPUT_DIR}/mergen-agent"
 
 GIT_SHA="unknown"
 if command -v git >/dev/null 2>&1; then
@@ -149,8 +147,7 @@ fi
 cat > "${OUTPUT_DIR}/build-info.txt" <<INFO
 source=cmd/mergen-init
 binary=${OUTPUT_PATH}
-telemetry_binary=${OUTPUT_DIR}/mergen-telemetry
-supervisor_binary=${OUTPUT_DIR}/mergen-supervisor
+agent_binary=${OUTPUT_DIR}/mergen-agent
 goos=${TARGET_GOOS}
 goarch=${TARGET_GOARCH}
 cgo_enabled=${CGO_VALUE}
@@ -162,6 +159,5 @@ INFO
 echo
 echo "build completed"
 echo "  binary: ${OUTPUT_PATH}"
-echo "  telemetry: ${OUTPUT_DIR}/mergen-telemetry"
-echo "  supervisor: ${OUTPUT_DIR}/mergen-supervisor"
+echo "  agent: ${OUTPUT_DIR}/mergen-agent"
 echo "  info:   ${OUTPUT_DIR}/build-info.txt"

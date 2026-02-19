@@ -12,6 +12,7 @@ const (
 type CreateVMRequest struct {
 	RootFS      string                 `json:"rootfs"`
 	Kernel      string                 `json:"kernel"`
+	AgentDisk   string                 `json:"agentDisk,omitempty"`
 	PayloadDisk string                 `json:"payloadDisk,omitempty"`
 	DataDisk    string                 `json:"dataDisk,omitempty"`
 	EnvDisk     string                 `json:"envDisk,omitempty"`
@@ -57,6 +58,7 @@ type VMMetadata struct {
 	CreatedAt   time.Time              `json:"createdAt"`
 	RootFS      string                 `json:"rootfs"`
 	Kernel      string                 `json:"kernel"`
+	AgentDisk   string                 `json:"agentDisk,omitempty"`
 	PayloadDisk string                 `json:"payloadDisk,omitempty"`
 	DataDisk    string                 `json:"dataDisk,omitempty"`
 	EnvDisk     string                 `json:"envDisk,omitempty"`

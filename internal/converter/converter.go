@@ -29,30 +29,31 @@ import (
 const (
 	defaultOutputBase     = "/var/lib/mergen/images"
 	defaultSbinInitPath   = "./artifacts/sbin-init/sbin-init"
-	defaultTelemetryPath  = "./artifacts/sbin-init/mergen-telemetry"
-	defaultSupervisorPath = "./artifacts/sbin-init/mergen-supervisor"
+	defaultAgentPath      = "./artifacts/sbin-init/mergen-agent"
 	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on init=/sbin/init"
 	defaultRootFSOverhead = 256
+	defaultAgentOverhead  = 16
 	defaultGoldenOverhead = 64
 	defaultEnvOverhead    = 16
+	defaultAgentSizeMiB   = 32
 	defaultGoldenSizeMiB  = 128
 	defaultEnvSizeMiB     = 32
 	defaultEnvLine        = "Mergen=is super"
 )
 
 type Options struct {
-	Image          string
-	OutputDir      string
-	Name           string
-	SizeMiB        int
-	SkipPull       bool
-	SbinInitPath   string
-	TelemetryPath  string
-	SupervisorPath string
-	GoldenRootFS   string
-	GoldenSizeMiB  int
-	EnvSizeMiB     int
-	EnvLine        string
+	Image         string
+	OutputDir     string
+	Name          string
+	SizeMiB       int
+	AgentSizeMiB  int
+	SkipPull      bool
+	SbinInitPath  string
+	AgentPath     string
+	GoldenRootFS  string
+	GoldenSizeMiB int
+	EnvSizeMiB    int
+	EnvLine       string
 }
 
 type DeleteOptions struct {
@@ -67,6 +68,9 @@ type Result struct {
 	RootFSDir             string
 	RootFSTarPath         string
 	RootFSExt4Path        string
+	AgentRootFSDir        string
+	AgentRootFSTarPath    string
+	AgentRootFSExt4Path   string
 	PayloadRootFSDir      string
 	PayloadRootFSTarPath  string
 	PayloadRootFSExt4Path string
@@ -113,10 +117,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	if err := ensureReadableFile(normalized.SbinInitPath); err != nil {
 		return Result{}, err
 	}
-	if err := ensureReadableFile(normalized.TelemetryPath); err != nil {
-		return Result{}, err
-	}
-	if err := ensureReadableFile(normalized.SupervisorPath); err != nil {
+	if err := ensureReadableFile(normalized.AgentPath); err != nil {
 		return Result{}, err
 	}
 	if normalized.GoldenRootFS != "" {
@@ -136,9 +137,13 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
 
+	agentRootFSDir := filepath.Join(normalized.OutputDir, "agent-rootfs")
 	payloadRootFSDir := filepath.Join(normalized.OutputDir, "payload-rootfs")
 	goldenRootFSDir := filepath.Join(normalized.OutputDir, "golden-rootfs")
 	envRootFSDir := filepath.Join(normalized.OutputDir, "env-rootfs")
+	if err := resetDir(agentRootFSDir); err != nil {
+		return Result{}, fmt.Errorf("prepare agent rootfs dir: %w", err)
+	}
 	if err := resetDir(payloadRootFSDir); err != nil {
 		return Result{}, fmt.Errorf("prepare payload rootfs dir: %w", err)
 	}
@@ -199,11 +204,16 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		Env:               cloneStrings(pulled.Config.Env),
 		WorkingDir:        pulled.Config.WorkingDir,
 		User:              pulled.Config.User,
-		PayloadDevice:     "/dev/vdb",
+		AgentDevice:       "/dev/vdb",
+		AgentFSType:       "ext4",
+		AgentMountPoint:   "/mnt/agent",
+		AgentReadOnly:     true,
+		AgentPath:         "/mnt/agent/mergen-agent",
+		PayloadDevice:     "/dev/vdc",
 		PayloadFSType:     "ext4",
 		PayloadMountPoint: "/mnt/payload",
 		PayloadReadOnly:   false,
-		EnvDevice:         "/dev/vdc",
+		EnvDevice:         "/dev/vdd",
 		EnvFSType:         "ext4",
 		EnvMountPoint:     "/mnt/env",
 		EnvReadOnly:       true,
@@ -230,12 +240,19 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	if err := injectRuntimeMetadata(runtimePath, goldenRootFSDir); err != nil {
 		return Result{}, err
 	}
+	if err := injectAgentBinary(normalized.AgentPath, agentRootFSDir); err != nil {
+		return Result{}, err
+	}
 
 	envFilePath := filepath.Join(envRootFSDir, "mergen.env")
 	if err := writeEnvDiskFile(envFilePath, normalized.EnvLine); err != nil {
 		return Result{}, err
 	}
 
+	agentRootFSTar := filepath.Join(normalized.OutputDir, "agent-rootfs.tar")
+	if err := createTarFromDir(agentRootFSDir, agentRootFSTar); err != nil {
+		return Result{}, err
+	}
 	payloadRootFSTar := filepath.Join(normalized.OutputDir, "payload-rootfs.tar")
 	if err := createTarFromDir(payloadRootFSDir, payloadRootFSTar); err != nil {
 		return Result{}, err
@@ -245,6 +262,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
+	agentSizeMiB, err := resolveSizeMiB(agentRootFSDir, normalized.AgentSizeMiB, defaultAgentOverhead, defaultAgentSizeMiB)
+	if err != nil {
+		return Result{}, err
+	}
 	payloadSizeMiB, err := resolveSizeMiB(payloadRootFSDir, normalized.SizeMiB, defaultRootFSOverhead, 64)
 	if err != nil {
 		return Result{}, err
@@ -258,6 +279,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
+	agentRootFSExt4 := filepath.Join(normalized.OutputDir, "agent-rootfs.ext4")
+	if err := buildExt4(ctx, agentRootFSDir, agentRootFSExt4, agentSizeMiB); err != nil {
+		return Result{}, err
+	}
 	payloadRootFSExt4 := filepath.Join(normalized.OutputDir, "payload-rootfs.ext4")
 	if err := buildExt4(ctx, payloadRootFSDir, payloadRootFSExt4, payloadSizeMiB); err != nil {
 		return Result{}, err
@@ -277,7 +302,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	suggestedVMPath := filepath.Join(normalized.OutputDir, "suggested-vm-request.json")
-	if err := writeSuggestedVMRequest(suggestedVMPath, normalized.Image, goldenRootFSExt4, payloadRootFSExt4, envRootFSExt4, suggestedHTTPPort); err != nil {
+	if err := writeSuggestedVMRequest(suggestedVMPath, normalized.Image, goldenRootFSExt4, agentRootFSExt4, payloadRootFSExt4, envRootFSExt4, suggestedHTTPPort); err != nil {
 		return Result{}, err
 	}
 
@@ -287,6 +312,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		RootFSDir:             goldenRootFSDir,
 		RootFSTarPath:         goldenRootFSTar,
 		RootFSExt4Path:        goldenRootFSExt4,
+		AgentRootFSDir:        agentRootFSDir,
+		AgentRootFSTarPath:    agentRootFSTar,
+		AgentRootFSExt4Path:   agentRootFSExt4,
 		PayloadRootFSDir:      payloadRootFSDir,
 		PayloadRootFSTarPath:  payloadRootFSTar,
 		PayloadRootFSExt4Path: payloadRootFSExt4,
@@ -306,6 +334,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		"image", result.Image,
 		"outputDir", result.OutputDir,
 		"goldenRootfsExt4", result.RootFSExt4Path,
+		"agentRootfsExt4", result.AgentRootFSExt4Path,
 		"payloadRootfsExt4", result.PayloadRootFSExt4Path,
 		"envRootfsExt4", result.EnvRootFSExt4Path,
 		"httpPort", result.SuggestedHTTPPort,
@@ -350,18 +379,18 @@ func (r *Runner) Delete(ctx context.Context, opts DeleteOptions) (DeleteResult, 
 }
 
 type normalizedOptions struct {
-	Image          string
-	OutputDir      string
-	Name           string
-	SizeMiB        int
-	SkipPull       bool
-	SbinInitPath   string
-	TelemetryPath  string
-	SupervisorPath string
-	GoldenRootFS   string
-	GoldenSizeMiB  int
-	EnvSizeMiB     int
-	EnvLine        string
+	Image         string
+	OutputDir     string
+	Name          string
+	SizeMiB       int
+	AgentSizeMiB  int
+	SkipPull      bool
+	SbinInitPath  string
+	AgentPath     string
+	GoldenRootFS  string
+	GoldenSizeMiB int
+	EnvSizeMiB    int
+	EnvLine       string
 }
 
 type normalizedTarget struct {
@@ -380,13 +409,9 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 	if sbinInitPath == "" {
 		sbinInitPath = defaultSbinInitPath
 	}
-	telemetryPath := strings.TrimSpace(opts.TelemetryPath)
-	if telemetryPath == "" {
-		telemetryPath = defaultTelemetryPath
-	}
-	supervisorPath := strings.TrimSpace(opts.SupervisorPath)
-	if supervisorPath == "" {
-		supervisorPath = defaultSupervisorPath
+	agentPath := strings.TrimSpace(opts.AgentPath)
+	if agentPath == "" {
+		agentPath = defaultAgentPath
 	}
 	goldenRootFS := strings.TrimSpace(opts.GoldenRootFS)
 	envLine := strings.TrimSpace(opts.EnvLine)
@@ -397,6 +422,9 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 	if opts.SizeMiB < 0 {
 		return normalizedOptions{}, fmt.Errorf("sizeMiB must be >= 0, got %d", opts.SizeMiB)
 	}
+	if opts.AgentSizeMiB < 0 {
+		return normalizedOptions{}, fmt.Errorf("agentSizeMiB must be >= 0, got %d", opts.AgentSizeMiB)
+	}
 	if opts.GoldenSizeMiB < 0 {
 		return normalizedOptions{}, fmt.Errorf("goldenSizeMiB must be >= 0, got %d", opts.GoldenSizeMiB)
 	}
@@ -405,18 +433,18 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 	}
 
 	return normalizedOptions{
-		Image:          target.Image,
-		OutputDir:      target.OutputDir,
-		Name:           target.Name,
-		SizeMiB:        opts.SizeMiB,
-		SkipPull:       opts.SkipPull,
-		SbinInitPath:   sbinInitPath,
-		TelemetryPath:  telemetryPath,
-		SupervisorPath: supervisorPath,
-		GoldenRootFS:   goldenRootFS,
-		GoldenSizeMiB:  opts.GoldenSizeMiB,
-		EnvSizeMiB:     opts.EnvSizeMiB,
-		EnvLine:        envLine,
+		Image:         target.Image,
+		OutputDir:     target.OutputDir,
+		Name:          target.Name,
+		SizeMiB:       opts.SizeMiB,
+		AgentSizeMiB:  opts.AgentSizeMiB,
+		SkipPull:      opts.SkipPull,
+		SbinInitPath:  sbinInitPath,
+		AgentPath:     agentPath,
+		GoldenRootFS:  goldenRootFS,
+		GoldenSizeMiB: opts.GoldenSizeMiB,
+		EnvSizeMiB:    opts.EnvSizeMiB,
+		EnvLine:       envLine,
 	}, nil
 }
 
@@ -1023,6 +1051,11 @@ type runtimeMetadata struct {
 	Env               []string `json:"env,omitempty"`
 	WorkingDir        string   `json:"workingDir,omitempty"`
 	User              string   `json:"user,omitempty"`
+	AgentDevice       string   `json:"agentDevice"`
+	AgentFSType       string   `json:"agentFSType"`
+	AgentMountPoint   string   `json:"agentMountPoint"`
+	AgentReadOnly     bool     `json:"agentReadOnly"`
+	AgentPath         string   `json:"agentPath"`
 	PayloadDevice     string   `json:"payloadDevice"`
 	PayloadFSType     string   `json:"payloadFSType"`
 	PayloadMountPoint string   `json:"payloadMountPoint"`
@@ -1083,8 +1116,7 @@ func prepareMinimalGoldenRootFS(goldenDir string) error {
 		"tmp",
 		"var",
 		"mnt",
-		"mnt/payload",
-		"mnt/env",
+		"mnt/agent",
 	}
 	for _, rel := range dirs {
 		if err := os.MkdirAll(filepath.Join(goldenDir, rel), 0o755); err != nil {
@@ -1121,22 +1153,22 @@ func injectGoldenBinaries(opts normalizedOptions, goldenDir string) error {
 		return fmt.Errorf("write golden /sbin/mergen-init: %w", err)
 	}
 
-	telemetryBytes, err := os.ReadFile(opts.TelemetryPath)
-	if err != nil {
-		return fmt.Errorf("read mergen telemetry binary: %w", err)
-	}
-	if err := writeExecutableFileReplacingSymlink(filepath.Join(goldenDir, "sbin", "mergen-telemetry"), telemetryBytes); err != nil {
-		return fmt.Errorf("write golden /sbin/mergen-telemetry: %w", err)
+	return nil
+}
+
+func injectAgentBinary(hostAgentPath, agentRootfsDir string) error {
+	if err := os.MkdirAll(agentRootfsDir, 0o755); err != nil {
+		return fmt.Errorf("prepare agent rootfs: %w", err)
 	}
 
-	supervisorBytes, err := os.ReadFile(opts.SupervisorPath)
+	agentBytes, err := os.ReadFile(hostAgentPath)
 	if err != nil {
-		return fmt.Errorf("read mergen supervisor binary: %w", err)
+		return fmt.Errorf("read mergen agent binary: %w", err)
 	}
-	if err := writeExecutableFileReplacingSymlink(filepath.Join(goldenDir, "sbin", "mergen-supervisor"), supervisorBytes); err != nil {
-		return fmt.Errorf("write golden /sbin/mergen-supervisor: %w", err)
+	target := filepath.Join(agentRootfsDir, "mergen-agent")
+	if err := writeExecutableFileReplacingSymlink(target, agentBytes); err != nil {
+		return fmt.Errorf("write agent binary: %w", err)
 	}
-
 	return nil
 }
 
@@ -1426,13 +1458,14 @@ func inferHTTPPort(exposed map[string]struct{}) int {
 	return candidates[0].port
 }
 
-func writeSuggestedVMRequest(path, image, rootfsExt4, payloadExt4, envExt4 string, httpPort int) error {
+func writeSuggestedVMRequest(path, image, rootfsExt4, agentExt4, payloadExt4, envExt4 string, httpPort int) error {
 	if httpPort <= 0 {
 		httpPort = 80
 	}
 
 	payload := map[string]any{
 		"rootfs":      rootfsExt4,
+		"agentDisk":   agentExt4,
 		"payloadDisk": payloadExt4,
 		"envDisk":     envExt4,
 		"kernel":      "/var/lib/mergen/base/vmlinux",

@@ -28,12 +28,18 @@ func newFakeSystemd() *fakeSystemd {
 }
 
 func (f *fakeSystemd) Start(_ context.Context, id string) error {
+	if f.active[id] {
+		return nil
+	}
 	f.startCall++
 	f.active[id] = true
 	return nil
 }
 
 func (f *fakeSystemd) Stop(_ context.Context, id string) error {
+	if !f.active[id] {
+		return nil
+	}
 	f.stopCall++
 	f.active[id] = false
 	return nil
@@ -73,11 +79,23 @@ func TestServiceLifecycle_IdempotentStartStop(t *testing.T) {
 
 	kernelPath := filepath.Join(base, "vmlinux")
 	rootfsPath := filepath.Join(base, "rootfs.ext4")
+	agentPath := filepath.Join(base, "agent.ext4")
+	payloadPath := filepath.Join(base, "payload.ext4")
+	envPath := filepath.Join(base, "env.ext4")
 	if err := osWrite(kernelPath); err != nil {
 		t.Fatalf("write kernel: %v", err)
 	}
 	if err := osWrite(rootfsPath); err != nil {
 		t.Fatalf("write rootfs: %v", err)
+	}
+	if err := osWrite(agentPath); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := osWrite(payloadPath); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	if err := osWrite(envPath); err != nil {
+		t.Fatalf("write env: %v", err)
 	}
 
 	fake := newFakeSystemd()
@@ -90,10 +108,13 @@ func TestServiceLifecycle_IdempotentStartStop(t *testing.T) {
 	)
 
 	id, err := service.CreateVM(context.Background(), model.CreateVMRequest{
-		RootFS: rootfsPath,
-		Kernel: kernelPath,
-		VCPU:   1,
-		MemMiB: 512,
+		RootFS:      rootfsPath,
+		Kernel:      kernelPath,
+		AgentDisk:   agentPath,
+		PayloadDisk: payloadPath,
+		EnvDisk:     envPath,
+		VCPU:        1,
+		MemMiB:      512,
 		Ports: []model.PortBindingRequest{
 			{Guest: 8080, Host: 0},
 		},
@@ -142,11 +163,23 @@ func TestServiceCreateVM_HTTPPortPersisted(t *testing.T) {
 
 	kernelPath := filepath.Join(base, "vmlinux")
 	rootfsPath := filepath.Join(base, "rootfs.ext4")
+	agentPath := filepath.Join(base, "agent.ext4")
+	payloadPath := filepath.Join(base, "payload.ext4")
+	envPath := filepath.Join(base, "env.ext4")
 	if err := osWrite(kernelPath); err != nil {
 		t.Fatalf("write kernel: %v", err)
 	}
 	if err := osWrite(rootfsPath); err != nil {
 		t.Fatalf("write rootfs: %v", err)
+	}
+	if err := osWrite(agentPath); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := osWrite(payloadPath); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	if err := osWrite(envPath); err != nil {
+		t.Fatalf("write env: %v", err)
 	}
 
 	service := NewService(
@@ -158,11 +191,14 @@ func TestServiceCreateVM_HTTPPortPersisted(t *testing.T) {
 	)
 
 	id, err := service.CreateVM(context.Background(), model.CreateVMRequest{
-		RootFS:   rootfsPath,
-		Kernel:   kernelPath,
-		VCPU:     1,
-		MemMiB:   512,
-		HTTPPort: 80,
+		RootFS:      rootfsPath,
+		Kernel:      kernelPath,
+		AgentDisk:   agentPath,
+		PayloadDisk: payloadPath,
+		EnvDisk:     envPath,
+		VCPU:        1,
+		MemMiB:      512,
+		HTTPPort:    80,
 		Ports: []model.PortBindingRequest{
 			{Guest: 80, Host: 0},
 		},
@@ -183,7 +219,7 @@ func TestServiceCreateVM_HTTPPortPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read env: %v", err)
 	}
-	if !strings.Contains(string(envBytes), "MGN_HTTP_PORT=80") {
+	if !strings.Contains(string(envBytes), "MGN_HTTP_PORT='80'") {
 		t.Fatalf("expected MGN_HTTP_PORT in env file, got: %s", string(envBytes))
 	}
 }
@@ -203,11 +239,23 @@ func TestServiceCreateVM_HTTPPortRangeValidation(t *testing.T) {
 
 	kernelPath := filepath.Join(base, "vmlinux")
 	rootfsPath := filepath.Join(base, "rootfs.ext4")
+	agentPath := filepath.Join(base, "agent.ext4")
+	payloadPath := filepath.Join(base, "payload.ext4")
+	envPath := filepath.Join(base, "env.ext4")
 	if err := osWrite(kernelPath); err != nil {
 		t.Fatalf("write kernel: %v", err)
 	}
 	if err := osWrite(rootfsPath); err != nil {
 		t.Fatalf("write rootfs: %v", err)
+	}
+	if err := osWrite(agentPath); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := osWrite(payloadPath); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	if err := osWrite(envPath); err != nil {
+		t.Fatalf("write env: %v", err)
 	}
 
 	service := NewService(
@@ -219,11 +267,14 @@ func TestServiceCreateVM_HTTPPortRangeValidation(t *testing.T) {
 	)
 
 	_, err := service.CreateVM(context.Background(), model.CreateVMRequest{
-		RootFS:   rootfsPath,
-		Kernel:   kernelPath,
-		VCPU:     1,
-		MemMiB:   512,
-		HTTPPort: 70000,
+		RootFS:      rootfsPath,
+		Kernel:      kernelPath,
+		AgentDisk:   agentPath,
+		PayloadDisk: payloadPath,
+		EnvDisk:     envPath,
+		VCPU:        1,
+		MemMiB:      512,
+		HTTPPort:    70000,
 		Ports: []model.PortBindingRequest{
 			{Guest: 8080, Host: 0},
 		},

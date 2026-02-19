@@ -198,7 +198,7 @@ Forwarder behavior:
 
 ### 3. Convert OCI image with `mergen-converter` - Terminal-3
 
-Build in-guest runtime binaries first (`mergen-init`, `mergen-telemetry`, `mergen-supervisor`):
+Build in-guest runtime binaries first (`mergen-init`, `mergen-agent`):
 
 ```bash
 mkdir -p ./artifacts/sbin-init
@@ -207,10 +207,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -o ./artifacts/sbin-init/sbin-init ./cmd/mergen-init
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -o ./artifacts/sbin-init/mergen-telemetry ./cmd/mergen-telemetry
-
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -o ./artifacts/sbin-init/mergen-supervisor ./cmd/mergen-supervisor
+  go build -o ./artifacts/sbin-init/mergen-agent ./cmd/mergen-agent
 ```
 
 Equivalent helper command:
@@ -263,15 +260,18 @@ Default output path follows image reference hierarchy under `/var/lib/mergen/ima
 
 Converter outputs:
 
-- `golden-rootfs/` (disk0 filesystem with `mergen-init`, `mergen-telemetry`, `mergen-supervisor`)
+- `golden-rootfs/` (disk0 filesystem with `mergen-init`)
 - `golden-rootfs.ext4` (disk0)
+- `agent-rootfs/` (disk1 filesystem with `mergen-agent`)
+- `agent-rootfs.tar`
+- `agent-rootfs.ext4` (disk1)
 - `payload-rootfs/` extracted image filesystem
 - `payload-rootfs.tar`
-- `payload-rootfs.ext4` (disk1)
+- `payload-rootfs.ext4` (disk2)
 - `env-rootfs/` generated env filesystem
-- `env-rootfs.ext4` (disk2)
+- `env-rootfs.ext4` (disk3)
 - `image-meta.json` (entrypoint/cmd/env/startCmd metadata from image)
-- `mergen.runtime.json` (supervisor runtime spec consumed in guest)
+- `mergen.runtime.json` (agent runtime spec consumed in guest)
 - `suggested-bootargs.txt` (`init=/sbin/init`)
 - `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
 
@@ -300,6 +300,7 @@ export VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
   -H 'content-type: application/json' \
   -d '{
     "rootfs": "/var/lib/mergen/images/$IMAGE/golden-rootfs.ext4",
+    "agentDisk": "/var/lib/mergen/images/$IMAGE/agent-rootfs.ext4",
     "payloadDisk": "/var/lib/mergen/images/$IMAGE/payload-rootfs.ext4",
     "envDisk": "/var/lib/mergen/images/$IMAGE/env-rootfs.ext4",
     "kernel": "/var/lib/mergen/base/vmlinux",
