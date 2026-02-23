@@ -26,10 +26,10 @@ type Config struct {
 func FromEnv() Config {
 	return Config{
 		HTTPAddr:        getEnv("MGR_HTTP_ADDR", ":8080"),
-		ConfigRoot:      getEnv("MGR_CONFIG_ROOT", "/etc/mergen/vm.d"),
+		ConfigRoot:      getEnv("MGR_CONFIG_ROOT", "/var/lib/mergen/vm.d"),
 		DataRoot:        getEnv("MGR_DATA_ROOT", "/var/lib/mergen"),
 		RunRoot:         getEnv("MGR_RUN_ROOT", "/run/mergen"),
-		GlobalHooksDir:  getEnv("MGR_GLOBAL_HOOKS_DIR", "/etc/mergen/hooks.d"),
+		GlobalHooksDir:  getEnv("MGR_GLOBAL_HOOKS_DIR", "/var/lib/mergen/hooks.d"),
 		UnitPrefix:      getEnv("MGR_UNIT_PREFIX", "mergen"),
 		SystemctlPath:   getEnv("MGR_SYSTEMCTL_PATH", "systemctl"),
 		CommandTimeout:  time.Duration(getEnvInt("MGR_COMMAND_TIMEOUT_SECONDS", 10)) * time.Second,

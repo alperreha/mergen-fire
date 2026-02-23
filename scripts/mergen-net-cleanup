@@ -2,7 +2,8 @@
 set -euo pipefail
 
 VM_ID="${1:?vm id is required}"
-VM_DIR="/etc/mergen/vm.d/${VM_ID}"
+CONFIG_ROOT="${MGN_CONFIG_ROOT:-/var/lib/mergen/vm.d}"
+VM_DIR="${CONFIG_ROOT}/${VM_ID}"
 
 if [[ -f "${VM_DIR}/env" ]]; then
   # shellcheck disable=SC1090

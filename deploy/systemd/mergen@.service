@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/mergen/vm.d/%i/env
+EnvironmentFile=-/var/lib/mergen/vm.d/%i/env
 ExecStartPre=/usr/local/bin/mergen-net-setup %i
 ExecStart=/usr/local/bin/mergen-jailer-start %i
 ExecStartPost=/usr/local/bin/mergen-configure-start %i

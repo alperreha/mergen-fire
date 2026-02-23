@@ -152,14 +152,14 @@ sudo wget -O /var/lib/mergen/base/vmlinux "https://s3.amazonaws.com/spec.ccfc.mi
 
 ### 2. Set up and run `mergen-forwarder` - Terminal-2
 
-Generate wildcard cert into `/etc/mergen/certs`:
+Generate wildcard cert into `/var/lib/mergen/certs`:
 
 ```bash
-sudo install -d -m 0755 /etc/mergen/certs
+sudo install -d -m 0755 /var/lib/mergen/certs
 
 # for *.vm.example.com domain
 export FWD_DOMAIN="vm.example.com"
-export FWD_DOMAIN_CERT_DIR="/etc/mergen/certs"
+export FWD_DOMAIN_CERT_DIR="/var/lib/mergen/certs"
 
 export FWD_DOMAIN_CERT_DAYS=365 # 1 year
 export FWD_DOMAIN_CERT_FILE="${FWD_DOMAIN_CERT_DIR}/wildcard.${FWD_DOMAIN}.crt"
@@ -182,8 +182,8 @@ Run forwarder:
 ```bash
 # set env values before start
 export FWD_DOMAIN="vm.example.com"
-export FWD_TLS_CERT_FILE="/etc/mergen/certs/wildcard.${FWD_DOMAIN}.crt"
-export FWD_TLS_KEY_FILE="/etc/mergen/certs/wildcard.${FWD_DOMAIN}.key"
+export FWD_TLS_CERT_FILE="/var/lib/mergen/certs/wildcard.${FWD_DOMAIN}.crt"
+export FWD_TLS_KEY_FILE="/var/lib/mergen/certs/wildcard.${FWD_DOMAIN}.key"
 export FWD_LOG_LEVEL=debug
 
 go run ./cmd/mergen-forwarder
@@ -353,10 +353,10 @@ sudo ip netns exec mergen-$(cut -d '-' -f 1 <<< $APPID) ip addr show dev tap-$(c
 Environment variables:
 
 - `MGR_HTTP_ADDR` (default `:8080`)
-- `MGR_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
+- `MGR_CONFIG_ROOT` (default `/var/lib/mergen/vm.d`)
 - `MGR_DATA_ROOT` (default `/var/lib/mergen`)
 - `MGR_RUN_ROOT` (default `/run/mergen`)
-- `MGR_GLOBAL_HOOKS_DIR` (default `/etc/mergen/hooks.d`)
+- `MGR_GLOBAL_HOOKS_DIR` (default `/var/lib/mergen/hooks.d`)
 - `MGR_UNIT_PREFIX` (default `mergen`)
 - `MGR_SYSTEMCTL_PATH` (default `systemctl`)
 - `MGR_COMMAND_TIMEOUT_SECONDS` (default `10`)
@@ -399,10 +399,10 @@ FWD_LOG_FORMAT=json go run ./cmd/mergen-forwarder
 
 Environment variables:
 
-- `FWD_CONFIG_ROOT` (default `/etc/mergen/vm.d`)
+- `FWD_CONFIG_ROOT` (default `/var/lib/mergen/vm.d`)
 - `FWD_NETNS_ROOT` (default `/run/netns`)
-- `FWD_TLS_CERT_FILE` (default `/etc/mergen/certs/wildcard.localhost.crt`)
-- `FWD_TLS_KEY_FILE` (default `/etc/mergen/certs/wildcard.localhost.key`)
+- `FWD_TLS_CERT_FILE` (default `/var/lib/mergen/certs/wildcard.localhost.crt`)
+- `FWD_TLS_KEY_FILE` (default `/var/lib/mergen/certs/wildcard.localhost.key`)
 - `FWD_DOMAIN_PREFIX` (default empty)
 - `FWD_DOMAIN_SUFFIX` (default `localhost`)
 - `FWD_HTTPS_ADDR` (default `:443`)

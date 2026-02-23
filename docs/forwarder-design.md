@@ -17,7 +17,7 @@ to HTTP services running inside Firecracker VMs.
 1. Client connects to forwarder HTTPS listener (`FWD_HTTPS_ADDR`, default `:443`).
 2. Forwarder terminates TLS with wildcard certificate (`*.{prefix.}suffix`, configured at runtime).
 3. Forwarder reads SNI (`ServerName`) from TLS handshake.
-4. SNI label is resolved to VM metadata from `/etc/mergen/vm.d/<id>/meta.json`.
+4. SNI label is resolved to VM metadata from `/var/lib/mergen/vm.d/<id>/meta.json`.
 5. Forwarder reads VM `httpPort` from resolved metadata.
 6. Forwarder enters VM netns (`${FWD_NETNS_ROOT}/<name>`, default `/run/netns`) for dial operation.
 7. Forwarder dials `guestIP:httpPort`.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -360,6 +361,7 @@ func (s *Service) ListVMs(ctx context.Context) ([]model.VMSummary, error) {
 func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, extra map[string]string) map[string]string {
 	env := map[string]string{
 		"MGN_VM_ID":       meta.ID,
+		"MGN_CONFIG_ROOT": filepath.Dir(paths.ConfigDir),
 		"MGN_CONFIG_DIR":  paths.ConfigDir,
 		"MGN_VM_JSON":     paths.VMConfigPath,
 		"MGN_META_JSON":   paths.MetaPath,
