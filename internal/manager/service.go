@@ -332,6 +332,78 @@ func (s *Service) GetVM(ctx context.Context, id string) (model.VMSummary, error)
 	}, nil
 }
 
+func (s *Service) GetVMMeta(ctx context.Context, id string) (model.VMMetadata, error) {
+	_ = ctx
+	s.logger.Debug("get vm metadata requested", "vmID", id)
+	if strings.TrimSpace(id) == "" {
+		return model.VMMetadata{}, fmt.Errorf("%w: id is empty", ErrInvalidRequest)
+	}
+	exists, err := s.store.Exists(id)
+	if err != nil {
+		return model.VMMetadata{}, err
+	}
+	if !exists {
+		return model.VMMetadata{}, ErrNotFound
+	}
+
+	meta, err := s.store.ReadMeta(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return model.VMMetadata{}, ErrNotFound
+		}
+		return model.VMMetadata{}, err
+	}
+	return meta, nil
+}
+
+func (s *Service) GetVMConfig(ctx context.Context, id string) (model.VMConfig, error) {
+	_ = ctx
+	s.logger.Debug("get vm config requested", "vmID", id)
+	if strings.TrimSpace(id) == "" {
+		return model.VMConfig{}, fmt.Errorf("%w: id is empty", ErrInvalidRequest)
+	}
+	exists, err := s.store.Exists(id)
+	if err != nil {
+		return model.VMConfig{}, err
+	}
+	if !exists {
+		return model.VMConfig{}, ErrNotFound
+	}
+
+	cfg, err := s.store.ReadVMConfig(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return model.VMConfig{}, ErrNotFound
+		}
+		return model.VMConfig{}, err
+	}
+	return cfg, nil
+}
+
+func (s *Service) GetVMHooks(ctx context.Context, id string) (model.HooksConfig, error) {
+	_ = ctx
+	s.logger.Debug("get vm hooks requested", "vmID", id)
+	if strings.TrimSpace(id) == "" {
+		return model.HooksConfig{}, fmt.Errorf("%w: id is empty", ErrInvalidRequest)
+	}
+	exists, err := s.store.Exists(id)
+	if err != nil {
+		return model.HooksConfig{}, err
+	}
+	if !exists {
+		return model.HooksConfig{}, ErrNotFound
+	}
+
+	hooksCfg, err := s.store.ReadHooks(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return model.HooksConfig{}, ErrNotFound
+		}
+		return model.HooksConfig{}, err
+	}
+	return hooksCfg, nil
+}
+
 func (s *Service) ListVMs(ctx context.Context) ([]model.VMSummary, error) {
 	s.logger.Debug("list vms requested")
 	ids, err := s.store.ListVMIDs()

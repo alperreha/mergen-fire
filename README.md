@@ -42,6 +42,9 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
   - `POST /v1/vms/:id/stop`
   - `DELETE /v1/vms/:id`
   - `GET /v1/vms/:id`
+  - `GET /v1/vms/:id/meta.json`
+  - `GET /v1/vms/:id/vm.json`
+  - `GET /v1/vms/:id/hooks.json`
   - `GET /v1/vms`
 - File store:
   - `vm.json` (Firecracker config)

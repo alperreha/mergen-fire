@@ -29,6 +29,9 @@ func Register(e *echo.Echo, service *manager.Service, logger *slog.Logger) {
 	v1.POST("/vms/:id/stop", handler.stopVM)
 	v1.DELETE("/vms/:id", handler.deleteVM)
 	v1.GET("/vms/:id", handler.getVM)
+	v1.GET("/vms/:id/meta.json", handler.getVMMeta)
+	v1.GET("/vms/:id/vm.json", handler.getVMConfig)
+	v1.GET("/vms/:id/hooks.json", handler.getVMHooks)
 	v1.GET("/vms", handler.listVMs)
 }
 
@@ -106,6 +109,39 @@ func (h *Handler) getVM(c echo.Context) error {
 	}
 	h.logger.Debug("http get vm success", "vmID", id)
 	return c.JSON(http.StatusOK, vm)
+}
+
+func (h *Handler) getVMMeta(c echo.Context) error {
+	id := c.Param("id")
+	h.logger.Debug("http get vm meta", "vmID", id, "method", c.Request().Method, "path", c.Request().URL.Path)
+	meta, err := h.service.GetVMMeta(c.Request().Context(), id)
+	if err != nil {
+		return h.writeServiceError(c, err)
+	}
+	h.logger.Debug("http get vm meta success", "vmID", id)
+	return c.JSON(http.StatusOK, meta)
+}
+
+func (h *Handler) getVMConfig(c echo.Context) error {
+	id := c.Param("id")
+	h.logger.Debug("http get vm config", "vmID", id, "method", c.Request().Method, "path", c.Request().URL.Path)
+	cfg, err := h.service.GetVMConfig(c.Request().Context(), id)
+	if err != nil {
+		return h.writeServiceError(c, err)
+	}
+	h.logger.Debug("http get vm config success", "vmID", id)
+	return c.JSON(http.StatusOK, cfg)
+}
+
+func (h *Handler) getVMHooks(c echo.Context) error {
+	id := c.Param("id")
+	h.logger.Debug("http get vm hooks", "vmID", id, "method", c.Request().Method, "path", c.Request().URL.Path)
+	hooksCfg, err := h.service.GetVMHooks(c.Request().Context(), id)
+	if err != nil {
+		return h.writeServiceError(c, err)
+	}
+	h.logger.Debug("http get vm hooks success", "vmID", id)
+	return c.JSON(http.StatusOK, hooksCfg)
 }
 
 func (h *Handler) listVMs(c echo.Context) error {
