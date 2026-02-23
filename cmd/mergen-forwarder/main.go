@@ -23,11 +23,10 @@ func main() {
 		"configRoot", cfg.ConfigRoot,
 		"netnsRoot", cfg.NetNSRoot,
 		"httpsAddr", cfg.HTTPSAddr,
-		"domainPrefix", cfg.DomainPrefix,
-		"domainSuffix", cfg.DomainSuffix,
+		"domain", cfg.Domain,
 	)
 
-	resolver := forwarder.NewResolver(cfg.ConfigRoot, cfg.DomainPrefix, cfg.DomainSuffix, cfg.ResolverCacheTTL, logger.With("component", "resolver"))
+	resolver := forwarder.NewResolver(cfg.ConfigRoot, cfg.Domain, cfg.ResolverCacheTTL, logger.With("component", "resolver"))
 	dialer := forwarder.NewNetNSDialer(cfg.DialTimeout, cfg.NetNSRoot)
 
 	server, err := forwarder.NewServer(cfg, resolver, dialer, logger.With("component", "server"))

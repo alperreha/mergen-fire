@@ -31,3 +31,32 @@ func TestNormalizeListenAddr(t *testing.T) {
 		}
 	}
 }
+
+func TestFromEnv_UsesSingleDomain(t *testing.T) {
+	t.Setenv("FWD_DOMAIN", "vm.example.com")
+	t.Setenv("FWD_TLS_CERT_FILE", "")
+	t.Setenv("FWD_TLS_KEY_FILE", "")
+
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() returned error: %v", err)
+	}
+
+	if cfg.Domain != "vm.example.com" {
+		t.Fatalf("Domain mismatch: got %q want %q", cfg.Domain, "vm.example.com")
+	}
+	if cfg.CertFile != "/var/lib/mergen/certs/wildcard.vm.example.com.crt" {
+		t.Fatalf("CertFile mismatch: got %q", cfg.CertFile)
+	}
+	if cfg.KeyFile != "/var/lib/mergen/certs/wildcard.vm.example.com.key" {
+		t.Fatalf("KeyFile mismatch: got %q", cfg.KeyFile)
+	}
+}
+
+func TestFromEnv_InvalidDomain(t *testing.T) {
+	t.Setenv("FWD_DOMAIN", ".")
+	_, err := FromEnv()
+	if err == nil {
+		t.Fatal("expected error for invalid FWD_DOMAIN, got nil")
+	}
+}

@@ -18,12 +18,11 @@ import (
 var ErrVMNotFound = errors.New("vm not found for requested host")
 
 type Resolver struct {
-	configRoot   string
-	domainPrefix string
-	domainSuffix string
-	domainTail   string
-	cacheTTL     time.Duration
-	logger       *slog.Logger
+	configRoot string
+	domain     string
+	domainTail string
+	cacheTTL   time.Duration
+	logger     *slog.Logger
 
 	mu         sync.RWMutex
 	cacheUntil time.Time
@@ -31,33 +30,28 @@ type Resolver struct {
 	ordered    []model.VMMetadata
 }
 
-func NewResolver(configRoot, domainPrefix, domainSuffix string, cacheTTL time.Duration, logger *slog.Logger) *Resolver {
+func NewResolver(configRoot, domain string, cacheTTL time.Duration, logger *slog.Logger) *Resolver {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	domainPrefix = normalizeDomainPart(domainPrefix)
-	domainSuffix = normalizeDomainPart(domainSuffix)
-	if domainSuffix == "" {
-		domainSuffix = "localhost"
+	domain = normalizeDomain(domain)
+	if domain == "" {
+		domain = "localhost"
 	}
 	if cacheTTL <= 0 {
 		cacheTTL = 5 * time.Second
 	}
 
-	tail := "." + domainSuffix
-	if domainPrefix != "" {
-		tail = "." + domainPrefix + tail
-	}
+	tail := "." + domain
 
 	return &Resolver{
-		configRoot:   configRoot,
-		domainPrefix: domainPrefix,
-		domainSuffix: domainSuffix,
-		domainTail:   tail,
-		cacheTTL:     cacheTTL,
-		logger:       logger,
-		cache:        map[string]model.VMMetadata{},
-		ordered:      nil,
+		configRoot: configRoot,
+		domain:     domain,
+		domainTail: tail,
+		cacheTTL:   cacheTTL,
+		logger:     logger,
+		cache:      map[string]model.VMMetadata{},
+		ordered:    nil,
 	}
 }
 

@@ -406,8 +406,7 @@ Environment variables:
 - `FWD_NETNS_ROOT` (default `/run/netns`)
 - `FWD_TLS_CERT_FILE` (default `/var/lib/mergen/certs/wildcard.localhost.crt`)
 - `FWD_TLS_KEY_FILE` (default `/var/lib/mergen/certs/wildcard.localhost.key`)
-- `FWD_DOMAIN_PREFIX` (default empty)
-- `FWD_DOMAIN_SUFFIX` (default `localhost`)
+- `FWD_DOMAIN` (default `localhost`)
 - `FWD_HTTPS_ADDR` (default `:443`)
 - `FWD_DIAL_TIMEOUT_SECONDS` (default `5`)
 - `FWD_RESOLVER_CACHE_TTL_SECONDS` (default `5`)
@@ -417,8 +416,7 @@ Environment variables:
 
 SNI matching:
 
-- prefix empty: `<label>.<suffix>`
-- prefix set: `<label>.<prefix>.<suffix>`
+- `<label>.<domain>` (for example `app1.vm.example.com`)
 
 This SNI rule applies to HTTPS listener routing.
 

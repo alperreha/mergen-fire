@@ -33,18 +33,16 @@ to HTTP services running inside Firecracker VMs.
 
 Runtime config:
 
-- `FWD_DOMAIN_PREFIX` (optional)
-- `FWD_DOMAIN_SUFFIX` (required)
+- `FWD_DOMAIN` (required)
 
 Match rule:
 
-- If prefix empty: `<label>.<suffix>`
-- If prefix set: `<label>.<prefix>.<suffix>`
+- `<label>.<domain>`
 
 Examples:
 
-- `FWD_DOMAIN_PREFIX=""`, `FWD_DOMAIN_SUFFIX="localhost"` -> `app1.localhost`
-- `FWD_DOMAIN_PREFIX="vm"`, `FWD_DOMAIN_SUFFIX="example.com"` -> `app1.vm.example.com`
+- `FWD_DOMAIN="localhost"` -> `app1.localhost`
+- `FWD_DOMAIN="vm.example.com"` -> `app1.vm.example.com`
 
 ## SNI to VM Mapping
 

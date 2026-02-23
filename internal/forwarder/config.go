@@ -15,8 +15,7 @@ type Config struct {
 	CertFile         string
 	KeyFile          string
 	HTTPSAddr        string
-	DomainPrefix     string
-	DomainSuffix     string
+	Domain           string
 	LogLevel         string
 	LogFormat        string
 	DialTimeout      time.Duration
@@ -30,13 +29,12 @@ func FromEnv() (Config, error) {
 		return Config{}, err
 	}
 
-	domainPrefix := normalizeDomainPart(getEnv("FWD_DOMAIN_PREFIX", ""))
-	domainSuffix := normalizeDomainPart(getEnv("FWD_DOMAIN_SUFFIX", "localhost"))
-	if domainSuffix == "" {
-		return Config{}, fmt.Errorf("FWD_DOMAIN_SUFFIX cannot be empty")
+	domain := normalizeDomain(getEnv("FWD_DOMAIN", "localhost"))
+	if domain == "" {
+		return Config{}, fmt.Errorf("FWD_DOMAIN cannot be empty")
 	}
 
-	defaultCertBase := domainBase(domainPrefix, domainSuffix)
+	defaultCertBase := domain
 
 	cfg := Config{
 		ConfigRoot:       getEnv("FWD_CONFIG_ROOT", "/var/lib/mergen/vm.d"),
@@ -44,8 +42,7 @@ func FromEnv() (Config, error) {
 		CertFile:         getEnv("FWD_TLS_CERT_FILE", "/var/lib/mergen/certs/wildcard."+defaultCertBase+".crt"),
 		KeyFile:          getEnv("FWD_TLS_KEY_FILE", "/var/lib/mergen/certs/wildcard."+defaultCertBase+".key"),
 		HTTPSAddr:        httpsAddr,
-		DomainPrefix:     domainPrefix,
-		DomainSuffix:     domainSuffix,
+		Domain:           domain,
 		LogLevel:         getEnv("FWD_LOG_LEVEL", "debug"),
 		LogFormat:        getEnv("FWD_LOG_FORMAT", "console"),
 		DialTimeout:      time.Duration(getEnvInt("FWD_DIAL_TIMEOUT_SECONDS", 5)) * time.Second,
@@ -56,14 +53,7 @@ func FromEnv() (Config, error) {
 	return cfg, nil
 }
 
-func domainBase(prefix, suffix string) string {
-	if prefix == "" {
-		return suffix
-	}
-	return prefix + "." + suffix
-}
-
-func normalizeDomainPart(raw string) string {
+func normalizeDomain(raw string) string {
 	part := strings.ToLower(strings.TrimSpace(raw))
 	part = strings.Trim(part, ".")
 	return part

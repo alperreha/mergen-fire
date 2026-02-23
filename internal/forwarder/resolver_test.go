@@ -27,7 +27,7 @@ func TestResolverResolveByTagAndUUID(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 
-	resolver := NewResolver(root, "", "localhost", 1*time.Second, nil)
+	resolver := NewResolver(root, "localhost", 1*time.Second, nil)
 
 	byApp, err := resolver.Resolve("app1.localhost")
 	if err != nil {
@@ -46,7 +46,7 @@ func TestResolverResolveByTagAndUUID(t *testing.T) {
 	}
 }
 
-func TestResolverResolveWithPrefixAndSuffix(t *testing.T) {
+func TestResolverResolveWithDomain(t *testing.T) {
 	root := t.TempDir()
 	vmID := "11111111-2222-3333-4444-555555555555"
 	vmDir := filepath.Join(root, vmID)
@@ -64,10 +64,10 @@ func TestResolverResolveWithPrefixAndSuffix(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 
-	resolver := NewResolver(root, "vm", "example.com", 1*time.Second, nil)
+	resolver := NewResolver(root, "vm.example.com", 1*time.Second, nil)
 	byApp, err := resolver.Resolve("edgeapp.vm.example.com")
 	if err != nil {
-		t.Fatalf("resolve with prefix/suffix failed: %v", err)
+		t.Fatalf("resolve with domain failed: %v", err)
 	}
 	if byApp.ID != vmID {
 		t.Fatalf("unexpected vm id: %s", byApp.ID)
@@ -109,7 +109,7 @@ func TestResolverResolveFirst(t *testing.T) {
 		t.Fatalf("write newer meta: %v", err)
 	}
 
-	resolver := NewResolver(root, "", "localhost", time.Second, nil)
+	resolver := NewResolver(root, "localhost", time.Second, nil)
 	first, err := resolver.ResolveFirst()
 	if err != nil {
 		t.Fatalf("resolve first: %v", err)
