@@ -219,7 +219,10 @@ Equivalent helper command:
 Optional: build a reusable BusyBox-based golden rootfs (disk0) with Buildroot:
 
 ```bash
-./scripts/build-golden-rootfs.sh
+# install build_root dependencies
+sudo apt install -y build-essential unzip
+# if you are root add FORCE_UNSAFE_CONFIGURE=1 to the command
+FORCE_UNSAFE_CONFIGURE=1 ./scripts/build-golden-rootfs.sh
 # output:
 #   ./artifacts/golden-rootfs/golden-rootfs
 #   ./artifacts/golden-rootfs/golden-rootfs.ext4

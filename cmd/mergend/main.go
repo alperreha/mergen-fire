@@ -35,7 +35,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	systemdClient := systemd.NewExecClient(cfg.SystemctlPath, cfg.UnitPrefix, cfg.CommandTimeout, logger.With("component", "systemd"))
+	systemdClient := systemd.NewClient(cfg.SystemctlPath, cfg.UnitPrefix, cfg.CommandTimeout, logger.With("component", "systemd"))
 	hookRunner := hooks.NewRunner(logger.With("component", "hooks"))
 	allocator := network.
 		NewAllocator(cfg.PortStart, cfg.PortEnd, cfg.GuestCIDR).
