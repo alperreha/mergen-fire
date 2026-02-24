@@ -26,10 +26,11 @@ func NewDBusClient(unitPrefix string, timeout time.Duration, logger *slog.Logger
 		logger = slog.Default()
 	}
 
-	runCtx, cancel := withTimeout(context.Background(), timeout)
-	defer cancel()
-
-	conn, err := sddb.NewSystemConnectionContext(runCtx)
+	// godbus attaches the connection lifecycle to the provided context.
+	// If that context is canceled (including timeout cancellation), the
+	// DBus connection is closed and subsequent calls fail with:
+	// "dbus: connection closed by user".
+	conn, err := sddb.NewSystemConnectionContext(context.Background())
 	if err != nil {
 		logger.Warn("systemd dbus unavailable", "error", err)
 		return &DBusClient{
@@ -202,6 +203,10 @@ func (c *DBusClient) mapError(err error, unit string) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	if errors.Is(err, gdbus.ErrClosed) {
+		c.logger.Warn("systemd dbus unavailable", "unit", unit, "error", err)
+		return ErrUnavailable
+	}
 
 	var dbusErr *gdbus.Error
 	if errors.As(err, &dbusErr) {
@@ -224,6 +229,9 @@ func (c *DBusClient) mapError(err error, unit string) error {
 	case strings.Contains(message, "NoSuchUnit"):
 		c.logger.Warn("systemd dbus unit not found", "unit", unit, "error", message)
 		return fmt.Errorf("%w: %s", ErrUnitNotFound, unit)
+	case strings.Contains(message, "connection closed by user"):
+		c.logger.Warn("systemd dbus unavailable", "unit", unit, "error", message)
+		return ErrUnavailable
 	case strings.Contains(message, "Failed to connect to bus"),
 		strings.Contains(message, "/run/systemd/private"):
 		c.logger.Warn("systemd dbus unavailable", "unit", unit, "error", message)
