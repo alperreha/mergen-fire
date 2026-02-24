@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Lifecycle: ExecStartPre | VM lifecycle: prepare per-VM netns/tap before Firecracker process launch.
+
 VM_ID="${1:?vm id is required}"
 CONFIG_ROOT="${MGN_CONFIG_ROOT:-/var/lib/mergen/vm.d}"
 VM_DIR="${CONFIG_ROOT}/${VM_ID}"

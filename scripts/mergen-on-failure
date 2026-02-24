@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Lifecycle: OnFailure unit ExecStart | VM lifecycle: emit host-visible failure telemetry for failed VM unit.
+
+VM_ID="${1:?vm id is required}"
+CONFIG_ROOT="${MGN_CONFIG_ROOT:-/var/lib/mergen/vm.d}"
+VM_DIR="${CONFIG_ROOT}/${VM_ID}"
+
+if [[ -f "${VM_DIR}/env" ]]; then
+  # shellcheck disable=SC1090
+  source "${VM_DIR}/env"
+fi
+
+UNIT_PREFIX="${MGN_UNIT_PREFIX:-mergen}"
+UNIT_NAME="${MGN_UNIT_NAME:-${UNIT_PREFIX}@${VM_ID}.service}"
+LIFECYCLE_LOG_FILE="${MGN_LIFECYCLE_LOG_FILE:-/var/log/mergen/vm-lifecycle.log}"
+JOURNAL_TAIL_LINES="${MGN_FAILURE_JOURNAL_TAIL:-40}"
+
+append_log_file() {
+  local line="${1}"
+  local log_dir
+
+  if [[ -z "${LIFECYCLE_LOG_FILE}" ]]; then
+    return 0
+  fi
+
+  log_dir="$(dirname "${LIFECYCLE_LOG_FILE}")"
+  mkdir -p "${log_dir}" >/dev/null 2>&1 || true
+  printf '%s\n' "${line}" >> "${LIFECYCLE_LOG_FILE}" 2>/dev/null || true
+}
+
+emit_log() {
+  local level="${1}"
+  local event="${2}"
+  local message="${3}"
+  local ts
+  local line
+
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  line="${ts} level=${level} vm_id=${VM_ID} stage=on-failure unit=${UNIT_NAME} event=${event} msg=\"${message}\""
+  printf '%s\n' "${line}"
+  append_log_file "${line}"
+}
+
+emit_log "error" "vm_unit_failed" "systemd unit entered failed state"
+
+if command -v systemctl >/dev/null 2>&1; then
+  SYSTEMD_STATUS="$(systemctl show "${UNIT_NAME}" \
+    --property=Result \
+    --property=ExecMainStatus \
+    --property=ActiveState \
+    --property=SubState \
+    --property=StateChangeTimestamp \
+    --no-pager 2>/dev/null || true)"
+
+  if [[ -n "${SYSTEMD_STATUS}" ]]; then
+    while IFS= read -r status_line; do
+      [[ -z "${status_line}" ]] && continue
+      emit_log "error" "systemd_status" "${status_line}"
+    done <<< "${SYSTEMD_STATUS}"
+  else
+    emit_log "warn" "systemd_status_empty" "systemctl show returned no output"
+  fi
+else
+  emit_log "warn" "systemctl_missing" "systemctl command not found in PATH"
+fi
+
+if command -v journalctl >/dev/null 2>&1; then
+  emit_log "error" "journal_tail_begin" "collecting last ${JOURNAL_TAIL_LINES} lines"
+  JOURNAL_OUTPUT="$(journalctl -u "${UNIT_NAME}" -n "${JOURNAL_TAIL_LINES}" --no-pager --output=short-iso 2>/dev/null || true)"
+  if [[ -n "${JOURNAL_OUTPUT}" ]]; then
+    while IFS= read -r journal_line; do
+      [[ -z "${journal_line}" ]] && continue
+      printf '%s\n' "${journal_line}"
+      append_log_file "${journal_line}"
+    done <<< "${JOURNAL_OUTPUT}"
+  else
+    emit_log "warn" "journal_tail_empty" "no recent journal lines found"
+  fi
+  emit_log "error" "journal_tail_end" "journal capture completed"
+else
+  emit_log "warn" "journalctl_missing" "journalctl command not found in PATH"
+fi
+
+exit 0

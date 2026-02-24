@@ -1,0 +1,9 @@
+[Unit]
+Description=Mergen microVM failure handler %i
+After=mergen@%i.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/var/lib/mergen/vm.d/%i/env
+Environment=MGN_UNIT_NAME=mergen@%i.service
+ExecStart=/usr/local/bin/mergen-on-failure %i

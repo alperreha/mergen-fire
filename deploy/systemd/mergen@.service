@@ -2,14 +2,22 @@
 Description=Mergen microVM %i
 After=network-online.target
 Wants=network-online.target
+OnFailure=mergen-failure@%i.service
 
 [Service]
 Type=simple
 EnvironmentFile=-/var/lib/mergen/vm.d/%i/env
+# ExecCondition: start gate; fail fast if required VM artifacts are missing.
+ExecCondition=/usr/local/bin/mergen-preflight-check %i
+# ExecStartPre: host-side netns/tap preparation.
 ExecStartPre=/usr/local/bin/mergen-net-setup %i
+# ExecStart: launch Firecracker process (main unit process).
 ExecStart=/usr/local/bin/mergen-jailer-start %i
+# ExecStartPost: configure Firecracker API and start VM instance.
 ExecStartPost=/usr/local/bin/mergen-configure-start %i
+# ExecStop: best-effort graceful stop path.
 ExecStop=/usr/local/bin/mergen-graceful-stop %i
+# ExecStopPost: cleanup host network artifacts.
 ExecStopPost=/usr/local/bin/mergen-net-cleanup %i
 Restart=on-failure
 RestartSec=2

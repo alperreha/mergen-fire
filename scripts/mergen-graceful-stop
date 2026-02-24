@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Lifecycle: ExecStop | VM lifecycle: perform best-effort graceful guest shutdown path.
+
 VM_ID="${1:?vm id is required}"
 CONFIG_ROOT="${MGN_CONFIG_ROOT:-/var/lib/mergen/vm.d}"
 VM_DIR="${CONFIG_ROOT}/${VM_ID}"

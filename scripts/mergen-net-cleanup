@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Lifecycle: ExecStopPost | VM lifecycle: cleanup per-VM host network artifacts after stop.
+
 VM_ID="${1:?vm id is required}"
 CONFIG_ROOT="${MGN_CONFIG_ROOT:-/var/lib/mergen/vm.d}"
 VM_DIR="${CONFIG_ROOT}/${VM_ID}"

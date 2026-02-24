@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Lifecycle: ExecCondition | VM lifecycle: validate required VM artifacts before start pipeline begins.
+
+VM_ID="${1:?vm id is required}"
+CONFIG_ROOT="${MGN_CONFIG_ROOT:-/var/lib/mergen/vm.d}"
+VM_DIR="${CONFIG_ROOT}/${VM_ID}"
+
+if [[ -f "${VM_DIR}/env" ]]; then
+  # shellcheck disable=SC1090
+  source "${VM_DIR}/env"
+fi
+
+VM_JSON="${MGN_VM_JSON:-${VM_DIR}/vm.json}"
+META_JSON="${MGN_META_JSON:-${VM_DIR}/meta.json}"
+LIFECYCLE_LOG_FILE="${MGN_LIFECYCLE_LOG_FILE:-/var/log/mergen/vm-lifecycle.log}"
+
+append_log_file() {
+  local line="${1}"
+  local log_dir
+
+  if [[ -z "${LIFECYCLE_LOG_FILE}" ]]; then
+    return 0
+  fi
+
+  log_dir="$(dirname "${LIFECYCLE_LOG_FILE}")"
+  mkdir -p "${log_dir}" >/dev/null 2>&1 || true
+  printf '%s\n' "${line}" >> "${LIFECYCLE_LOG_FILE}" 2>/dev/null || true
+}
+
+emit_log() {
+  local level="${1}"
+  local event="${2}"
+  local message="${3}"
+  local ts
+  local line
+
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  line="${ts} level=${level} vm_id=${VM_ID} stage=exec-condition event=${event} msg=\"${message}\""
+  printf '%s\n' "${line}"
+  append_log_file "${line}"
+}
+
+fail() {
+  local event="${1}"
+  local message="${2}"
+
+  emit_log "error" "${event}" "${message}"
+  # Exit 255 so systemd marks the unit as failed (not skipped) and OnFailure hooks can run.
+  exit 255
+}
+
+require_file() {
+  local path="${1}"
+  local label="${2}"
+
+  if [[ ! -f "${path}" ]]; then
+    fail "missing_${label}" "${label} not found: ${path}"
+  fi
+}
+
+require_file "${VM_JSON}" "vm_json"
+require_file "${META_JSON}" "meta_json"
+
+if ! command -v jq >/dev/null 2>&1; then
+  fail "missing_jq" "jq command not found in PATH"
+fi
+
+KERNEL_PATH="$(jq -r '.["boot-source"].kernel_image_path // empty' "${VM_JSON}")"
+if [[ -z "${KERNEL_PATH}" ]]; then
+  fail "invalid_vm_json" "boot-source.kernel_image_path is empty in ${VM_JSON}"
+fi
+require_file "${KERNEL_PATH}" "kernel_image"
+
+ROOT_DRIVE_PATH="$(jq -r '.drives[]? | select(.is_root_device == true) | .path_on_host // empty' "${VM_JSON}" | head -n 1)"
+if [[ -z "${ROOT_DRIVE_PATH}" ]]; then
+  fail "missing_root_drive" "vm.json has no root drive entry"
+fi
+require_file "${ROOT_DRIVE_PATH}" "root_drive"
+
+while IFS= read -r DRIVE_PATH; do
+  [[ -z "${DRIVE_PATH}" ]] && continue
+  require_file "${DRIVE_PATH}" "drive"
+done < <(jq -r '.drives[]?.path_on_host // empty' "${VM_JSON}")
+
+emit_log "info" "preflight_ok" "all required vm files are present"
+exit 0

@@ -118,11 +118,14 @@ Install systemd template + helper scripts (Linux host):
 
 ```bash
 sudo install -D -m 0644 deploy/systemd/mergen@.service /etc/systemd/system/mergen@.service
+sudo install -D -m 0644 deploy/systemd/mergen-failure@.service /etc/systemd/system/mergen-failure@.service
+sudo install -m 0755 scripts/mergen-preflight-check /usr/local/bin/mergen-preflight-check
 sudo install -m 0755 scripts/mergen-net-setup /usr/local/bin/mergen-net-setup
 sudo install -m 0755 scripts/mergen-jailer-start /usr/local/bin/mergen-jailer-start
 sudo install -m 0755 scripts/mergen-configure-start /usr/local/bin/mergen-configure-start
 sudo install -m 0755 scripts/mergen-graceful-stop /usr/local/bin/mergen-graceful-stop
 sudo install -m 0755 scripts/mergen-net-cleanup /usr/local/bin/mergen-net-cleanup
+sudo install -m 0755 scripts/mergen-on-failure /usr/local/bin/mergen-on-failure
 sudo systemctl daemon-reload
 ```
 
@@ -423,14 +426,17 @@ This SNI rule applies to HTTPS listener routing.
 ## Systemd template and scripts
 
 - Unit template: `deploy/systemd/mergen@.service`
+- Failure hook template: `deploy/systemd/mergen-failure@.service` (`OnFailure=`)
 - Helper scripts:
+  - `scripts/mergen-preflight-check`
   - `scripts/mergen-net-setup`
   - `scripts/mergen-jailer-start`
   - `scripts/mergen-configure-start`
   - `scripts/mergen-graceful-stop`
   - `scripts/mergen-net-cleanup`
+  - `scripts/mergen-on-failure`
 
-`mergen-jailer-start` and `mergen-configure-start` now run real Firecracker API flow (socket + config + InstanceStart). `mergen-configure-start` also performs best-effort `PUT /entropy` before VM start (disable with `MGN_ENABLE_ENTROPY_DEVICE=0` if needed). Networking scripts are still minimal and should be hardened for production (NAT/filtering/policy).
+`mergen-jailer-start` and `mergen-configure-start` now run real Firecracker API flow (socket + config + InstanceStart). `mergen-configure-start` also performs best-effort `PUT /entropy` before VM start (disable with `MGN_ENABLE_ENTROPY_DEVICE=0` if needed). `mergen-preflight-check` gates startup via `ExecCondition` and returns a hard failure for missing artifacts so `OnFailure` can trigger. `mergen-on-failure` writes failure signals to journal/stdout plus `MGN_LIFECYCLE_LOG_FILE` (default `/var/log/mergen/vm-lifecycle.log`). Networking scripts are still minimal and should be hardened for production (NAT/filtering/policy).
 
 ## Firecracker SDK note
 
