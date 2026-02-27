@@ -1,0 +1,105 @@
+services:
+  consul:
+    image: hashicorp/consul:latest
+    container_name: mergen-consul
+    command:
+      - consul
+      - agent
+      - -dev
+      - -client=0.0.0.0
+      - -ui
+      - -config-dir=/consul/config
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    volumes:
+      - ./deploy/consul/mergen-xds-center-service.hcl:/consul/config/mergen-xds-center-service.hcl:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8500/v1/status/leader"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  mergen-xds-center:
+    build:
+      context: .
+      dockerfile: ./deploy/docker/mergen-xds-center.Dockerfile
+    image: mergen-xds-center:local
+    container_name: mergen-xds-center
+    environment:
+      XDS_HTTP_ADDR: ":18080"
+      XDS_CONFIG_ROOT: "/var/lib/mergen/vm.d"
+      XDS_NETNS_ROOT: "/run/netns"
+      XDS_DOMAIN: "${XDS_DOMAIN:-localhost}"
+      XDS_RESOLVER_CACHE_TTL_SECONDS: "${XDS_RESOLVER_CACHE_TTL_SECONDS:-5}"
+      XDS_REQUEST_TIMEOUT_SECONDS: "${XDS_REQUEST_TIMEOUT_SECONDS:-10}"
+      XDS_SHUTDOWN_TIMEOUT_SECONDS: "${XDS_SHUTDOWN_TIMEOUT_SECONDS:-15}"
+      XDS_LOG_LEVEL: "${XDS_LOG_LEVEL:-info}"
+      XDS_LOG_FORMAT: "${XDS_LOG_FORMAT:-console}"
+      XDS_CONSUL_HTTP_ADDR: "http://consul:8500"
+      XDS_CONSUL_KV_PREFIX: "${XDS_CONSUL_KV_PREFIX:-mergen/xds/routes}"
+      XDS_CONSUL_HTTP_TOKEN: "${XDS_CONSUL_HTTP_TOKEN:-}"
+    command: ["serve"]
+    ports:
+      - "18080:18080"
+    volumes:
+      - ${XDS_CONFIG_ROOT_HOST:-/var/lib/mergen/vm.d}:/var/lib/mergen/vm.d:ro
+      - /run/netns:/run/netns:ro
+    depends_on:
+      consul:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mergen-xds-sync:
+    image: mergen-xds-center:local
+    container_name: mergen-xds-sync
+    environment:
+      XDS_CONFIG_ROOT: "/var/lib/mergen/vm.d"
+      XDS_NETNS_ROOT: "/run/netns"
+      XDS_DOMAIN: "${XDS_DOMAIN:-localhost}"
+      XDS_LOG_LEVEL: "${XDS_LOG_LEVEL:-info}"
+      XDS_LOG_FORMAT: "${XDS_LOG_FORMAT:-console}"
+      XDS_CONSUL_HTTP_ADDR: "http://consul:8500"
+      XDS_CONSUL_KV_PREFIX: "${XDS_CONSUL_KV_PREFIX:-mergen/xds/routes}"
+      XDS_CONSUL_HTTP_TOKEN: "${XDS_CONSUL_HTTP_TOKEN:-}"
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        while true; do
+          /usr/local/bin/mergen-xds-center sync-consul || true
+          sleep "${XDS_SYNC_INTERVAL_SECONDS:-10}"
+        done
+    volumes:
+      - ${XDS_CONFIG_ROOT_HOST:-/var/lib/mergen/vm.d}:/var/lib/mergen/vm.d:ro
+      - /run/netns:/run/netns:ro
+    depends_on:
+      consul:
+        condition: service_healthy
+      mergen-xds-center:
+        condition: service_started
+    restart: unless-stopped
+
+  envoy:
+    image: envoyproxy/envoy:latest
+    container_name: mergen-envoy
+    command:
+      - envoy
+      - -c
+      - /etc/envoy/envoy.yaml
+      - --service-cluster
+      - mergen-edge
+      - --log-level
+      - info
+    ports:
+      - "8443:8443"
+      - "9901:9901"
+    volumes:
+      - ./deploy/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mergen-xds-center:
+        condition: service_started
+    restart: unless-stopped

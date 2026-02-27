@@ -12,6 +12,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
 - `mergen-init`: Go PID1 init binary for converted rootfs
+- `mergen-xds-center`: starter control-plane helper for route catalog + optional Consul sync
 
 ## Table of Contents
 
@@ -24,6 +25,8 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - [API behavior notes](#api-behavior-notes)
 - [Configuration](#configuration)
 - [Forwarder Configuration](#forwarder-configuration)
+- [XDS Center Starter](#xds-center-starter)
+- [Docker Compose Starter](#docker-compose-starter)
 - [Systemd template and scripts](#systemd-template-and-scripts)
 - [Testing](#testing)
 
@@ -66,6 +69,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - **Control plane:** Go HTTP API server (`cmd/mergend`)
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
+- **Control-plane helper (starter):** route discovery + Consul sync (`cmd/mergen-xds-center`)
 - **Image conversion plane:** Registry-image-to-rootfs converter (`cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
@@ -76,11 +80,13 @@ Forwarder design details: `docs/forwarder-design.md`
 
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
+- `cmd/mergen-xds-center`: starter route/XDS helper CLI + API
 - `cmd/mergen-converter`: registry image conversion CLI
 - `cmd/mergen-init`: in-guest init/PID1 runtime
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
+- `internal/xdscenter`: route catalog + resolve API + optional Consul KV publisher
 - `internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
 - `internal/store`: filesystem persistence
 - `internal/systemd`: `systemctl` wrapper
@@ -89,6 +95,11 @@ Forwarder design details: `docs/forwarder-design.md`
 - `internal/hooks`: hook runner
 - `deploy/systemd/mergen@.service`: systemd unit template
 - `deploy/systemd/mergen-forwarder.service`: forwarder systemd unit
+- `deploy/systemd/mergen-xds-center.service`: xds-center systemd unit
+- `deploy/consul/`: Consul registration starter files
+- `deploy/envoy/`: Envoy compose starter config
+- `deploy/docker/`: local container build assets
+- `docker-compose.yml`: Consul + Envoy + XDS starter stack
 - `scripts/mergen-*`: host helper script stubs
 - `scripts/gen-wildcard-cert.sh`: self-signed wildcard TLS cert generator
 - `scripts/build-golden-rootfs.sh`: Buildroot + BusyBox based golden rootfs (disk0) builder
@@ -119,6 +130,7 @@ Install systemd template + helper scripts (Linux host):
 ```bash
 sudo install -D -m 0644 deploy/systemd/mergen@.service /etc/systemd/system/mergen@.service
 sudo install -D -m 0644 deploy/systemd/mergen-failure@.service /etc/systemd/system/mergen-failure@.service
+sudo install -D -m 0644 deploy/systemd/mergen-xds-center.service /etc/systemd/system/mergen-xds-center.service
 sudo install -m 0755 scripts/mergen-preflight-check /usr/local/bin/mergen-preflight-check
 sudo install -m 0755 scripts/mergen-net-setup /usr/local/bin/mergen-net-setup
 sudo install -m 0755 scripts/mergen-jailer-start /usr/local/bin/mergen-jailer-start
@@ -126,6 +138,9 @@ sudo install -m 0755 scripts/mergen-configure-start /usr/local/bin/mergen-config
 sudo install -m 0755 scripts/mergen-graceful-stop /usr/local/bin/mergen-graceful-stop
 sudo install -m 0755 scripts/mergen-net-cleanup /usr/local/bin/mergen-net-cleanup
 sudo install -m 0755 scripts/mergen-on-failure /usr/local/bin/mergen-on-failure
+mkdir -p ./artifacts/bin
+go build -o ./artifacts/bin/mergen-xds-center ./cmd/mergen-xds-center
+sudo install -m 0755 ./artifacts/bin/mergen-xds-center /usr/local/bin/mergen-xds-center
 sudo systemctl daemon-reload
 ```
 
@@ -423,10 +438,91 @@ SNI matching:
 
 This SNI rule applies to HTTPS listener routing.
 
+## XDS Center Starter
+
+Run service mode:
+
+```bash
+go run ./cmd/mergen-xds-center serve
+```
+
+One-shot commands:
+
+```bash
+go run ./cmd/mergen-xds-center resolve --host app1.vm.example.com
+go run ./cmd/mergen-xds-center list-routes
+go run ./cmd/mergen-xds-center sync-consul
+```
+
+Environment variables:
+
+- `XDS_HTTP_ADDR` (default `:18080`)
+- `XDS_CONFIG_ROOT` (default `/var/lib/mergen/vm.d`)
+- `XDS_NETNS_ROOT` (default `/run/netns`)
+- `XDS_DOMAIN` (default `localhost`)
+- `XDS_RESOLVER_CACHE_TTL_SECONDS` (default `5`)
+- `XDS_REQUEST_TIMEOUT_SECONDS` (default `10`)
+- `XDS_SHUTDOWN_TIMEOUT_SECONDS` (default `15`)
+- `XDS_CONSUL_HTTP_ADDR` (optional, e.g. `http://127.0.0.1:8500`)
+- `XDS_CONSUL_HTTP_TOKEN` (optional)
+- `XDS_CONSUL_KV_PREFIX` (default `mergen/xds/routes`)
+- `XDS_LOG_LEVEL` (default `info`)
+- `XDS_LOG_FORMAT` (default `console`)
+
+Starter docs:
+
+- `docs/xds-center-starter.md`
+- `deploy/consul/README.md`
+
+## Docker Compose Starter
+
+`docker-compose.yml` starts:
+
+- `consul` (Docker Hub `hashicorp/consul:latest`)
+- `mergen-xds-center` (local build from this repo)
+- `mergen-xds-sync` (periodic Consul KV sync loop)
+- `envoy` (Docker Hub `envoyproxy/envoy:latest`)
+
+Start:
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+Checks:
+
+```bash
+curl -s http://127.0.0.1:8500/v1/status/leader
+curl -s http://127.0.0.1:18080/healthz
+curl -s http://127.0.0.1:18080/v1/routes | jq
+curl -s http://127.0.0.1:9901/server_info | jq '.state'
+```
+
+Compose notes:
+
+- Envoy is currently configured as TLS passthrough edge on `:8443` and forwards to host `mergen-forwarder` on `:443`.
+- So your existing forwarder remains the SNI/router component.
+- `mergen-xds-sync` writes route records into Consul KV (`mergen/xds/routes/*`).
+- Update `.env` (`XDS_DOMAIN`, `XDS_CONFIG_ROOT_HOST`) before first run.
+
+Dynamic push note:
+
+- This compose stack demonstrates route catalog + Consul sync.
+- For full Envoy dynamic push (ADS/LDS/RDS/CDS/EDS/SDS), you still need a Go ADS/xDS gRPC service.
+- `mergen-xds-center` is the starter control-plane module you can extend for that next step.
+
 ## Systemd template and scripts
 
 - Unit template: `deploy/systemd/mergen@.service`
 - Failure hook template: `deploy/systemd/mergen-failure@.service` (`OnFailure=`)
+- XDS center unit: `deploy/systemd/mergen-xds-center.service`
 - Helper scripts:
   - `scripts/mergen-preflight-check`
   - `scripts/mergen-net-setup`

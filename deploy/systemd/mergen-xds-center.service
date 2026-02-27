@@ -1,0 +1,26 @@
+[Unit]
+Description=Mergen XDS Center (starter control plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=XDS_LOG_LEVEL=info
+Environment=XDS_LOG_FORMAT=console
+Environment=XDS_HTTP_ADDR=:18080
+Environment=XDS_CONFIG_ROOT=/var/lib/mergen/vm.d
+Environment=XDS_NETNS_ROOT=/run/netns
+Environment=XDS_DOMAIN=localhost
+Environment=XDS_RESOLVER_CACHE_TTL_SECONDS=5
+Environment=XDS_REQUEST_TIMEOUT_SECONDS=10
+Environment=XDS_SHUTDOWN_TIMEOUT_SECONDS=15
+# Optional Consul bootstrap:
+# Environment=XDS_CONSUL_HTTP_ADDR=http://127.0.0.1:8500
+# Environment=XDS_CONSUL_KV_PREFIX=mergen/xds/routes
+ExecStart=/usr/local/bin/mergen-xds-center serve
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
