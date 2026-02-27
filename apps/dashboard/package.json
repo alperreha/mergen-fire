@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
+    "@fontsource/noto-sans": "^5.2.10",
     "@kobalte/core": "^0.13.11",
     "@solid-primitives/storage": "^4.3.4",
     "@solidjs/router": "^0.15.0",
