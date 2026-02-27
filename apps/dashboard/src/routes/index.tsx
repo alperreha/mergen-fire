@@ -66,11 +66,19 @@ async function parseError(response: Response): Promise<string> {
 }
 
 async function fetchConvertedImages(): Promise<ConverterImagesResponse> {
-  const response = await fetch("/api/converter/images");
-  if (!response.ok) {
-    throw new Error(await parseError(response));
-  }
-  return (await response.json()) as ConverterImagesResponse;
+  // const response = await fetch("/api/converter/images");
+  // if (!response.ok) {
+  //   throw new Error(await parseError(response));
+  // }
+  // return (await response.json()) as ConverterImagesResponse;
+  return new Promise<ConverterImagesResponse>((resolve) => {
+    resolve({
+      items: [],
+      total: 0,
+      activeConversion: null,
+      baseDir: "/var/lib/mergen/converter",
+    });
+  });
 }
 
 async function runConvertImage(image: string): Promise<ConverterConvertResponse> {
