@@ -81,9 +81,9 @@ export type VMActionResponse = {
   status: string;
 };
 
-// Browser -> same-origin /api/v1/* -> SolidStart server -> mergen daemon (:8080)
+// Browser -> same-origin /v1/* -> mergen daemon (:8080)
 const rawAPIBase = (import.meta.env.VITE_MERGEN_API_BASE as string | undefined)?.trim() || "";
-const API_BASE = /^https?:\/\//i.test(rawAPIBase) ? "/api" : rawAPIBase || "/api";
+const API_BASE = /^https?:\/\//i.test(rawAPIBase) ? "/v1" : rawAPIBase || "/v1";
 
 function apiPath(path: string): string {
   return `${API_BASE}${path}`;

@@ -1,0 +1,61 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"login": {
+		"username": {
+			"title": "Username",
+			"description": "Your username must be 3-24 characters long and can only contain letters, numbers, and underscores.",
+			"placeholder": "Enter your username",
+			"invalid": "Username is not real."
+		},
+		"email": {
+			"title": "Email",
+			"description": "Your email must be a valid email address.",
+			"placeholder": "Enter your email",
+			"invalid": "Email is not real."
+		},
+		"password": {
+			"title": "Password",
+			"description": "Your password must be 8-12 characters long and can only contain letters, numbers, and underscores.",
+			"placeholder": "Enter your password",
+			"invalid": "Password is too weak."
+		}
+	},
+	"form": {
+		"title": "Login to your account",
+		"subtitle": "Enter your details to login.",
+		"separator": "OR",
+		"email": {
+			"label": "Email Address",
+			"placeholder": "hello@domain.com",
+			"required": "Please enter a valid email address"
+		},
+		"password": {
+			"label": "Password",
+			"placeholder": "• • • • • • • • • •",
+			"required": "Password must be at least 6 characters"
+		},
+		"actions": {
+			"keep-logged-in": "Keep me logged in",
+			"login": "Login",
+			"signing-in": "Signing in..."
+		},
+		"links": {
+			"forgot-password": "Forgot password?",
+			"sign-up-text": "Don't have an account?",
+			"sign-up-link": "Sign up"
+		},
+		"validation": {
+			"invalid-fields": "Invalid form fields.",
+			"success": "Sign in successful!"
+		}
+	},
+	"hero-right": {
+		"title": "Start Your Learning Journey",
+		"description": "Master cloud technologies with hands-on experience on real machines. Build, deploy, and scale applications in production-ready environments.",
+		"image-alt": "Developer coding on laptop",
+		"features": {
+			"infrastructure": "Real Cloud Infrastructure",
+			"guidance": "Expert Guidance"
+		}
+	}
+}

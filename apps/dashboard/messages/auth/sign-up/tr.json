@@ -1,0 +1,76 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"form": {
+		"title": "Hesabınızı oluşturun",
+		"subtitle": "Bugün bize katılın ve başlayın.",
+		"separator": "VEYA",
+		"name": {
+			"label": "Ad Soyad",
+			"placeholder": "Ahmet Yılmaz",
+			"required": "İsim 2-32 karakter arasında olmalıdır"
+		},
+		"email": {
+			"label": "E-posta Adresi",
+			"placeholder": "merhaba@domain.com",
+			"required": "Lütfen geçerli bir e-posta adresi girin"
+		},
+		"password": {
+			"label": "Şifre",
+			"placeholder": "• • • • • • • • • •",
+			"required": "Şifre en az 8 karakter olmalıdır"
+		},
+		"confirm-password": {
+			"label": "Şifre Tekrarı",
+			"placeholder": "• • • • • • • • • •",
+			"required": "Şifre tekrarı gereklidir",
+			"mismatch": "Şifreler eşleşmiyor"
+		},
+		"terms": {
+			"label": "kabul ediyorum",
+			"terms-link": "Hizmet Şartları",
+			"privacy-link": "Gizlilik Politikası",
+			"required": "Hizmet şartlarını kabul etmelisiniz"
+		},
+		"actions": {
+			"create-account": "Hesap Oluştur",
+			"creating-account": "Hesap oluşturuluyor..."
+		},
+		"links": {
+			"sign-in-text": "Zaten hesabınız var mı?",
+			"sign-in-link": "Giriş yapın"
+		},
+		"validation": {
+			"invalid-fields": "Form alanları geçersiz.",
+			"success": "Hesap başarıyla oluşturuldu!"
+		}
+	},
+	"hero-right": {
+		"title": "Öğrenim Topluluğumuza Katılın",
+		"description": "Bulut teknolojilerini öğrenen binlerce geliştiriciye katılın. Bilgi paylaşın, projelerde işbirliği yapın ve birlikte büyüyün.",
+		"image-alt": "Bulut projelerinde işbirliği yapan öğrenciler",
+		"features": {
+			"community": "Aktif Topluluk",
+			"projects": "Gerçek Projeler"
+		}
+	},
+	"testimonials": {
+		"title": "Öğrencilerimiz ne diyor",
+		"items": [
+			{
+				"name": "Ayşe Demir",
+				"role": "DevOps Mühendisi",
+				"content": "Uygulamalı yaklaşım sayesinde geleneksel altyapıdan bulut-native çözümlere geçiş yapabildim. Hayallerimin şirketinde işe başladım!"
+			},
+			{
+				"name": "Mehmet Özkan",
+				"role": "Bulut Mimarı",
+				"content": "Gerçek üretim ortamları fark yarattı. Sektörde kullanılan gerçek araç ve iş akışlarıyla pratik yapabildim."
+			},
+			{
+				"name": "Elif Yıldız",
+				"role": "Yazılım Geliştirici",
+				"content": "Mentorluk ve topluluk desteği beklentilerimi aştı. Takıldığımda her zaman yardım edecek birisi vardı."
+			}
+		]
+	}
+}

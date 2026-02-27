@@ -1,0 +1,61 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"login": {
+		"username": {
+			"title": "Kullanıcı Adı",
+			"description": "Kullanıcı adınız 3-24 karakter uzunluğunda olmalı ve sadece harf, rakam ve alt çizgi içerebilir.",
+			"placeholder": "Kullanıcı adınızı girin",
+			"invalid": "Kullanıcı adı geçerli değil."
+		},
+		"email": {
+			"title": "E-posta",
+			"description": "E-posta adresiniz geçerli bir e-posta adresi olmalıdır.",
+			"placeholder": "E-posta adresinizi girin",
+			"invalid": "E-posta geçerli değil."
+		},
+		"password": {
+			"title": "Şifre",
+			"description": "Şifreniz 8-12 karakter uzunluğunda olmalı ve sadece harf, rakam ve alt çizgi içerebilir.",
+			"placeholder": "Şifrenizi girin",
+			"invalid": "Şifre çok zayıf."
+		}
+	},
+	"form": {
+		"title": "Hesabınıza giriş yapın",
+		"subtitle": "Giriş yapmak için bilgilerinizi girin.",
+		"separator": "VEYA",
+		"email": {
+			"label": "E-posta Adresi",
+			"placeholder": "merhaba@domain.com",
+			"required": "Lütfen geçerli bir e-posta adresi girin"
+		},
+		"password": {
+			"label": "Şifre",
+			"placeholder": "• • • • • • • • • •",
+			"required": "Şifre en az 6 karakter olmalıdır"
+		},
+		"actions": {
+			"keep-logged-in": "Oturum açık kalsın",
+			"login": "Giriş Yap",
+			"signing-in": "Giriş yapılıyor..."
+		},
+		"links": {
+			"forgot-password": "Şifremi unuttum?",
+			"sign-up-text": "Hesabınız yok mu?",
+			"sign-up-link": "Kayıt olun"
+		},
+		"validation": {
+			"invalid-fields": "Form alanları geçersiz.",
+			"success": "Giriş başarılı!"
+		}
+	},
+	"hero-right": {
+		"title": "Öğrenim Yolculuğunuza Başlayın",
+		"description": "Gerçek makinelerde uygulamalı deneyimlerle bulut teknolojilerinde uzmanlaşın. Üretim ortamlarında uygulamaları geliştirin, dağıtın ve ölçeklendirin.",
+		"image-alt": "Dizüstü bilgisayarda kod yazan geliştirici",
+		"features": {
+			"infrastructure": "Gerçek Bulut Altyapısı",
+			"guidance": "Uzman Senaryolar"
+		}
+	}
+}

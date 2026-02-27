@@ -82,7 +82,7 @@ async function fetchConvertedImages(): Promise<ConverterImagesResponse> {
 }
 
 async function runConvertImage(image: string): Promise<ConverterConvertResponse> {
-  const response = await fetch("/api/converter/convert", {
+  const response = await fetch("/v1/converter/convert", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ image }),

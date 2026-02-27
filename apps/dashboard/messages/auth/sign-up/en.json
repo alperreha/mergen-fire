@@ -1,0 +1,76 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"form": {
+		"title": "Create your account",
+		"subtitle": "Join us today and get started.",
+		"separator": "OR",
+		"name": {
+			"label": "Full Name",
+			"placeholder": "John Doe",
+			"required": "Name must be between 2-32 characters"
+		},
+		"email": {
+			"label": "Email Address",
+			"placeholder": "hello@domain.com",
+			"required": "Please enter a valid email address"
+		},
+		"password": {
+			"label": "Password",
+			"placeholder": "• • • • • • • • • •",
+			"required": "Password must be at least 8 characters"
+		},
+		"confirm-password": {
+			"label": "Confirm Password",
+			"placeholder": "• • • • • • • • • •",
+			"required": "Password confirmation is required",
+			"mismatch": "Passwords do not match"
+		},
+		"terms": {
+			"label": "I agree to the",
+			"terms-link": "Terms of Service",
+			"privacy-link": "Privacy Policy",
+			"required": "You must accept the terms and conditions"
+		},
+		"actions": {
+			"create-account": "Create Account",
+			"creating-account": "Creating account..."
+		},
+		"links": {
+			"sign-in-text": "Already have an account?",
+			"sign-in-link": "Sign in"
+		},
+		"validation": {
+			"invalid-fields": "Invalid form fields.",
+			"success": "Account created successfully!"
+		}
+	},
+	"hero-right": {
+		"title": "Join Our Learning Community",
+		"description": "Connect with thousands of developers learning cloud technologies. Share knowledge, collaborate on projects, and grow together.",
+		"image-alt": "Students collaborating on cloud projects",
+		"features": {
+			"community": "Active Community",
+			"projects": "Real Projects"
+		}
+	},
+	"testimonials": {
+		"title": "What our students say",
+		"items": [
+			{
+				"name": "Sarah Chen",
+				"role": "DevOps Engineer",
+				"content": "The hands-on approach helped me transition from traditional infrastructure to cloud-native solutions. I landed my dream job at a tech startup!"
+			},
+			{
+				"name": "Michael Rodriguez",
+				"role": "Cloud Architect",
+				"content": "Real production environments made all the difference. I could practice with actual tools and workflows used in the industry."
+			},
+			{
+				"name": "Emily Johnson",
+				"role": "Software Developer",
+				"content": "The mentorship and community support exceeded my expectations. Always someone ready to help when I got stuck."
+			}
+		]
+	}
+}

@@ -1,0 +1,7 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"greeting": "Merhaba {name}!",
+	"unused": "Bu kullanılmayan bir mesajdır",
+	"Unused": "Bu, büyük U ile ikinci kullanılmayan mesajdır ve durum duyarlılığını test etmek için kullanılır",
+	"non_existent_in_de": "Bu yeni bir mesajdır"
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://inlang.com/schema/project-settings",
+  "baseLocale": "tr",
+  "locales": [
+    "tr",
+    "en"
+  ],
+  "telemetry": "off",
+  "modules": [
+    "https://cdn.jsdelivr.net/npm/@inlang/plugin-json@5.1.56/dist/index.js"
+  ],
+  "plugin.inlang.json": {
+    "pathPattern": {
+      "common": "./messages/{languageTag}.json",
+      "sign-in": "./messages/auth/sign-in/{languageTag}.json",
+      "sign-up": "./messages/auth/sign-up/{languageTag}.json"
+    },
+    "variableReferencePattern": [
+      "{",
+      "}"
+    ],
+    "ignore": [
+      "node_modules",
+      "dist"
+    ]
+  }
+}
