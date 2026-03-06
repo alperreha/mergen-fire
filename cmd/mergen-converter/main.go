@@ -45,6 +45,12 @@ type convertOptions struct {
 	AgentRootFS       bool
 	AgentRootFSSize   int
 	AgentRootFSOutput string
+	EnvRootFS         bool
+	EnvRootFSSize     int
+	EnvRootFSOutput   string
+	RuntimeJSONPath   string
+	EnvVars           []string
+	EnvVarFile        string
 	SkipPull          bool
 	DeleteRootFS      bool
 	SbinInitPath      string
@@ -77,7 +83,7 @@ func newConvertCmd() *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&opts.Image, "image", "", "Docker/OCI image reference (required unless --agent-rootfs is used), e.g. nginx:alpine")
+	f.StringVar(&opts.Image, "image", "", "Docker/OCI image reference (required unless --agent-rootfs/--env-rootfs is used), e.g. nginx:alpine")
 	f.StringVar(&opts.OutputDir, "output-dir", "", "Output directory (default: /var/lib/mergen/images/<image-ref>)")
 	f.StringVar(&opts.Name, "name", "", "Output name (used when output-dir is empty)")
 	f.IntVar(&opts.SizeMiB, "size-mib", 0, "Payload ext4 image size in MiB (0 = auto)")
@@ -85,6 +91,12 @@ func newConvertCmd() *cobra.Command {
 	f.BoolVar(&opts.AgentRootFS, "agent-rootfs", false, "Build agent-rootfs.ext4 from <base-assets-dir>/bin and exit")
 	f.IntVar(&opts.AgentRootFSSize, "agent-rootfs-size-mib", 0, "Agent rootfs ext4 size in MiB for --agent-rootfs mode (0 = auto)")
 	f.StringVar(&opts.AgentRootFSOutput, "agent-rootfs-output", "", "Output ext4 path for --agent-rootfs mode (default: <base-assets-dir>/agent-rootfs.ext4)")
+	f.BoolVar(&opts.EnvRootFS, "env-rootfs", false, "Build env-rootfs.ext4 from --runtime-json and optional env vars, then exit")
+	f.IntVar(&opts.EnvRootFSSize, "env-rootfs-size-mib", 0, "Env rootfs ext4 size in MiB for --env-rootfs mode (0 = auto)")
+	f.StringVar(&opts.EnvRootFSOutput, "env-rootfs-output", "", "Output ext4 path for --env-rootfs mode (default: <runtime-json-dir>/env-rootfs.ext4)")
+	f.StringVar(&opts.RuntimeJSONPath, "runtime-json", "", "Path to mergen.runtime.json (required for --env-rootfs mode)")
+	f.StringArrayVar(&opts.EnvVars, "env-var", nil, "Optional KEY=VALUE line added into env disk (repeatable, used by --env-rootfs)")
+	f.StringVar(&opts.EnvVarFile, "env-var-file", "", "Optional file containing KEY=VALUE lines for --env-rootfs mode")
 	f.BoolVar(&opts.SkipPull, "skip-pull", false, "Skip remote pull and reuse previously cached image blobs in output-dir/image-cache")
 	f.BoolVar(&opts.DeleteRootFS, "delete-rootfs", false, "Delete converted rootfs output for the selected image and exit")
 	f.StringVar(&opts.SbinInitPath, "sbin-init", "./artifacts/sbin-init/sbin-init", "Path to mergen-init binary (legacy mode only)")
@@ -112,8 +124,11 @@ func runConvert(opts convertOptions) error {
 	logger := logging.New(opts.LogLevel, opts.LogFormat).With("component", "mergen-converter")
 	runner := converter.NewRunner(logger)
 
-	if opts.AgentRootFS && opts.DeleteRootFS {
-		return fmt.Errorf("--agent-rootfs and --delete-rootfs cannot be used together")
+	if opts.AgentRootFS && opts.EnvRootFS {
+		return fmt.Errorf("--agent-rootfs and --env-rootfs cannot be used together")
+	}
+	if (opts.AgentRootFS || opts.EnvRootFS) && opts.DeleteRootFS {
+		return fmt.Errorf("--delete-rootfs cannot be used with --agent-rootfs/--env-rootfs")
 	}
 
 	if opts.AgentRootFS {
@@ -138,8 +153,35 @@ func runConvert(opts convertOptions) error {
 		return nil
 	}
 
+	if opts.EnvRootFS {
+		if strings.TrimSpace(opts.RuntimeJSONPath) == "" {
+			return fmt.Errorf("--runtime-json is required when --env-rootfs is used")
+		}
+
+		result, err := runner.BuildEnvRootFS(context.Background(), converter.EnvRootFSOptions{
+			RuntimePath: opts.RuntimeJSONPath,
+			OutputPath:  opts.EnvRootFSOutput,
+			SizeMiB:     opts.EnvRootFSSize,
+			EnvLines:    opts.EnvVars,
+			EnvFilePath: opts.EnvVarFile,
+		})
+		if err != nil {
+			return fmt.Errorf("env rootfs build failed: %w", err)
+		}
+
+		_, _ = fmt.Fprintf(os.Stdout, "mode: env-rootfs\n")
+		_, _ = fmt.Fprintf(os.Stdout, "runtime json: %s\n", result.RuntimePath)
+		_, _ = fmt.Fprintf(os.Stdout, "env rootfs ext4: %s\n", result.OutputPath)
+		_, _ = fmt.Fprintf(os.Stdout, "size mib: %d\n", result.SizeMiB)
+		_, _ = fmt.Fprintf(os.Stdout, "env line count: %d\n", result.EnvLineCount)
+		if result.ModeChangedToReadOnly {
+			_, _ = fmt.Fprintf(os.Stdout, "readonly: true\n")
+		}
+		return nil
+	}
+
 	if strings.TrimSpace(opts.Image) == "" {
-		return fmt.Errorf("--image is required (or use --agent-rootfs mode)")
+		return fmt.Errorf("--image is required (or use --agent-rootfs/--env-rootfs mode)")
 	}
 
 	if opts.DeleteRootFS {

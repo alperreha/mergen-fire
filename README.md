@@ -321,6 +321,22 @@ go run ./cmd/mergen-converter \
 
 `--agent-rootfs` mode does not pull image and does not build payload; it only builds mountable ext4 agent disk from base `bin` binaries and marks output as read-only.
 
+Generate `env-rootfs.ext4` from runtime metadata (`mergen.runtime.json`) and optional env vars:
+
+```bash
+export IMAGE="nginx:alpine"
+
+go run ./cmd/mergen-converter \
+  convert \
+  --env-rootfs \
+  --runtime-json "/var/lib/mergen/images/${IMAGE}/mergen.runtime.json" \
+  --env-rootfs-output "/var/lib/mergen/images/${IMAGE}/env-rootfs.ext4" \
+  --env-var "APP_ENV=prod" \
+  --env-var "LOG_LEVEL=info"
+```
+
+`--env-rootfs` mode does not pull image and does not build payload; it only packages runtime/env metadata into mountable ext4 env disk.
+
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
 Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
 Default behavior creates only payload artifacts (`payload-rootfs/`, `payload-rootfs.ext4`, metadata files).  
@@ -397,6 +413,7 @@ export IMAGE="nginx:alpine"
 export PORT=80
 export SUBDOMAIN="app1"
 export FWD_DOMAIN="vm.example.com"
+export ENV_DISK="/var/lib/mergen/images/$IMAGE/env-rootfs.ext4"
 
 export VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
   -H 'content-type: application/json' \
@@ -404,9 +421,12 @@ export VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
     "rootfs": "/var/lib/mergen/base/current/golden-rootfs.ext4",
     "agentDisk": "/var/lib/mergen/base/current/agent-rootfs.ext4",
     "payloadDisk": "/var/lib/mergen/images/$IMAGE/payload-rootfs.ext4",
+    "envDisk": "/var/lib/mergen/images/$IMAGE/env-rootfs.ext4",
     "kernel": "/var/lib/mergen/base/current/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
+    "vsockEnabled": true,
+    "vsockGuestCID": 3,
     "ports": [{"guest": $PORT, "host": 0}],
     "httpPort": $PORT,
     "tags": {"app": "$SUBDOMAIN"},
