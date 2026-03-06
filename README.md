@@ -12,6 +12,8 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
 - `mergen-init`: Go PID1 init binary for converted rootfs
+- `mergen-vsock-guest`: in-guest VSock shell listener
+- `mergen-vsock-host`: host-side VSock terminal client
 
 ## Table of Contents
 
@@ -25,6 +27,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - [Configuration](#configuration)
 - [Forwarder Configuration](#forwarder-configuration)
 - [Systemd Template and Mergen Lifecycle](#systemd-template-and-mergen-lifecycle)
+- [VSock Emergency Shell](#vsock-emergency-shell)
 - [Testing](#testing)
 
 ## Why this project
@@ -68,6 +71,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
 - **Image conversion plane:** Registry-image-to-rootfs converter (`cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
+- **Emergency access plane:** Firecracker VSock host<->guest terminal bridge
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
 
 Forwarder design details: `docs/forwarder-design.md`
@@ -78,6 +82,8 @@ Forwarder design details: `docs/forwarder-design.md`
 - `cmd/mergen-forwarder`: TLS SNI forwarder
 - `cmd/mergen-converter`: registry image conversion CLI
 - `cmd/mergen-init`: in-guest init/PID1 runtime
+- `cmd/mergen-vsock-guest`: in-guest VSock listener that spawns shell
+- `cmd/mergen-vsock-host`: host-side VSock connector
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
@@ -200,7 +206,7 @@ Forwarder behavior:
 
 ### 3. Convert OCI image with `mergen-converter` - Terminal-3
 
-Build in-guest runtime binaries first (`mergen-init`, `mergen-agent`):
+Build in-guest runtime binaries first (`mergen-init`, `mergen-agent`, `mergen-vsock-guest`):
 
 ```bash
 mkdir -p ./artifacts/sbin-init
@@ -210,6 +216,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -o ./artifacts/sbin-init/mergen-agent ./cmd/mergen-agent
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o ./artifacts/sbin-init/mergen-vsock-guest ./cmd/mergen-vsock-guest
 ```
 
 Equivalent helper command:
@@ -217,6 +226,17 @@ Equivalent helper command:
 ```bash
 ./scripts/build-sbin-init-from-go.sh --goos linux --goarch amd64
 ```
+
+Install binaries into versioned base directory:
+
+```bash
+sudo ./scripts/build-sbin-init-from-go.sh \
+  --goos linux --goarch amd64 \
+  --install-base \
+  --base-dir /var/lib/mergen/base
+```
+
+This creates `/var/lib/mergen/base/<version>/bin/...` and updates `/var/lib/mergen/base/current` symlink by default.
 
 Optional: build a reusable BusyBox-based golden rootfs (disk0) with Buildroot:
 
@@ -244,18 +264,23 @@ sudo pkill -u mergen-builder || true
 sudo userdel -r mergen-builder
 ```
 
-Run converter:
+Run converter (default mode is payload-only):
 
 ```bash
 export IMAGE="nginx:alpine"
 
 go run ./cmd/mergen-converter \
-  -image $IMAGE \
-  -golden-rootfs-dir ./artifacts/golden-rootfs/golden-rootfs
+  convert \
+  -image "$IMAGE" \
+  -vsock-enable
 ```
 
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
 Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
+Default behavior creates only payload artifacts (`payload-rootfs/`, `payload-rootfs.ext4`, metadata files).  
+If you really need old behavior (golden/agent/env bundle per image), use `-legacy-full-bundle`.
+Legacy bundle mode can still use `-golden-rootfs-dir` and `-sbin-init`/`-sbin-agent`.
+Use `-vsock-enable` to include VSock runtime metadata in generated runtime JSON.
 Injected `/sbin/init` is expected to be built from `cmd/mergen-init`.
 Default path is under `/var/lib/mergen/images`, so run with sufficient permissions (or override with `-output-dir`).
 Default output path follows image reference hierarchy under `/var/lib/mergen/images`:
@@ -265,20 +290,15 @@ Default output path follows image reference hierarchy under `/var/lib/mergen/ima
 
 Converter outputs:
 
-- `golden-rootfs/` (disk0 filesystem with `mergen-init`)
-- `golden-rootfs.ext4` (disk0)
-- `agent-rootfs/` (disk1 filesystem with `mergen-agent`)
-- `agent-rootfs.tar`
-- `agent-rootfs.ext4` (disk1)
 - `payload-rootfs/` extracted image filesystem
 - `payload-rootfs.tar`
 - `payload-rootfs.ext4` (disk2)
-- `env-rootfs/` generated env filesystem
-- `env-rootfs.ext4` (disk3)
 - `image-meta.json` (entrypoint/cmd/env/startCmd metadata from image)
-- `mergen.runtime.json` (agent runtime spec placed into env disk and consumed from `/mnt/env/mergen.runtime.json`)
+- `mergen.runtime.json` (runtime metadata output for orchestration/debug)
 - `suggested-bootargs.txt` (`init=/sbin/init`)
-- `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`)
+- `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`, points kernel/rootfs/agent to base dir)
+
+Base assets (kernel, golden rootfs, agent disk, optional env disk) should be managed under `/var/lib/mergen/base/<version>/...` and exposed via `/var/lib/mergen/base/current`.
 
 Delete a converted image rootfs bundle:
 
@@ -286,16 +306,38 @@ Delete a converted image rootfs bundle:
 export IMAGE="nginx:alpine"
 
 go run ./cmd/mergen-converter \
-  -image $IMAGE \
+  convert \
+  -image "$IMAGE" \
   -delete-rootfs
 ```
 
 Use `-output-dir` if you want to delete a non-default conversion location.
 
+Run converter doctor checks:
+
+```bash
+go run ./cmd/mergen-converter doctor
+```
+
+Example JSON output:
+
+```bash
+go run ./cmd/mergen-converter doctor --json
+```
+
+`doctor` validates base assets under `/var/lib/mergen/base/current` by default:
+
+- `vmlinux`
+- `golden-rootfs.ext4`
+- `agent-rootfs.ext4`
+- `bin/sbin-init`
+- `bin/mergen-agent`
+- optional: `env-rootfs.ext4`, `bin/mergen-vsock-guest`, `mergen-vsock-host` in `PATH`
+
 ### 4. End-to-end test with API and curl - Terminal-4
 
 ```bash
-# create vm (rootfs path from converter output)
+# create vm (payload from converter output, base rootfs/agent from /var/lib/mergen/base/current)
 export IMAGE="nginx:alpine"
 export PORT=80
 export SUBDOMAIN="app1"
@@ -304,11 +346,10 @@ export FWD_DOMAIN="vm.example.com"
 export VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
   -H 'content-type: application/json' \
   -d '{
-    "rootfs": "/var/lib/mergen/images/$IMAGE/golden-rootfs.ext4",
-    "agentDisk": "/var/lib/mergen/images/$IMAGE/agent-rootfs.ext4",
+    "rootfs": "/var/lib/mergen/base/current/golden-rootfs.ext4",
+    "agentDisk": "/var/lib/mergen/base/current/agent-rootfs.ext4",
     "payloadDisk": "/var/lib/mergen/images/$IMAGE/payload-rootfs.ext4",
-    "envDisk": "/var/lib/mergen/images/$IMAGE/env-rootfs.ext4",
-    "kernel": "/var/lib/mergen/base/vmlinux",
+    "kernel": "/var/lib/mergen/base/current/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
     "ports": [{"guest": $PORT, "host": 0}],
@@ -366,6 +407,11 @@ Environment variables:
 - `MGR_PORT_START` (default `20000`)
 - `MGR_PORT_END` (default `40000`)
 - `MGR_GUEST_CIDR` (default `172.30.0.0/24`)
+- `MGR_BASE_ASSETS_DIR` (default `/var/lib/mergen/base/current`)
+- `MGR_DEFAULT_KERNEL` (default `<MGR_BASE_ASSETS_DIR>/vmlinux`)
+- `MGR_DEFAULT_ROOTFS` (default `<MGR_BASE_ASSETS_DIR>/golden-rootfs.ext4`)
+- `MGR_DEFAULT_AGENT_DISK` (default `<MGR_BASE_ASSETS_DIR>/agent-rootfs.ext4`)
+- `MGR_DEFAULT_ENV_DISK` (default empty, optional)
 - `MGR_LOG_LEVEL` (default `info`, values: `debug|info|warn|error`)
 - `MGR_LOG_FORMAT` (default `console`, values: `console|json|text`)
 
@@ -431,6 +477,68 @@ This SNI rule applies to HTTPS listener routing.
 `mergen-lifecycle post-start` runs the Firecracker API flow (socket + config + InstanceStart) through `github.com/firecracker-microvm/firecracker-go-sdk`. `mergen-lifecycle stop` sends `SendCtrlAltDel` via SDK as best-effort stop signal. `mergen-lifecycle status` reads instance info from the Firecracker API socket, and `mergen-lifecycle restart` sends the same guest restart action. `MGN_ENABLE_ENTROPY_DEVICE` is kept for forward compatibility, but current pinned SDK version (`v1.0.0`) does not expose the entropy endpoint wrapper yet, so entropy setup is skipped with a debug log. Stage extensions run sequentially and wait for each hook to complete before the next hook starts. Lifecycle stage events are append-only written to `MGN_DAEMON_LOG_FILE` (default `/var/lib/mergen/daemon.log`).
 
 For per-VM extension hooks, create `lifecycle-hooks.json` under the VM config dir (`/var/lib/mergen/vm.d/<vm-id>/lifecycle-hooks.json`) with stage arrays (`preStart`, `postStart`, `preStop`, `postStop`, `preDelete`, `delete`, `postDelete`). You can also pass command hooks via env (`MGN_LIFECYCLE_PRE_START_HOOKS`, `MGN_LIFECYCLE_POST_STOP_HOOKS`, etc.), using `;` as separator. `{{vm_id}}` and `${VM_ID}` tokens are supported.
+
+## VSock Emergency Shell
+
+Firecracker terminal access for host -> guest shell can be added with native VSock support.
+
+- No extra disk is required by Firecracker for VSock itself.  
+  VSock is a VM device (`vm.json -> vsock`), not a block disk.
+- `mergen-vsock-guest` runs inside guest and listens on fixed VSock channel `7000`.
+- `mergen-vsock-host` runs on host and connects to Firecracker VSock UDS path.
+
+### 1. Create VM with VSock enabled
+
+Add these fields to `POST /v1/vms` payload:
+
+```json
+{
+  "vsockEnabled": true,
+  "vsockGuestCID": 3
+}
+```
+
+Optional:
+
+- `vsockUDSPath`: custom host-side UDS path (default: `<runDir>/mergen.vsock`)
+- `vsockID`: custom device id (default: `mergen`)
+
+### 2. Start guest helper from converter/agent flow
+
+If you use converter with `-vsock-enable`, runtime metadata includes:
+
+- `vsockEnabled`
+- `vsockGuestPath`
+- `vsockAuthToken` (if provided)
+
+`mergen-agent` starts `mergen-vsock-guest` automatically when `vsockEnabled=true`.
+
+### 3. Connect from host
+
+Build host binary:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o ./artifacts/sbin-init/mergen-vsock-host ./cmd/mergen-vsock-host
+```
+
+Connect using VM id (reads `vm.json` automatically):
+
+```bash
+./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id>
+```
+
+One-shot command mode:
+
+```bash
+./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id> -command 'uname -a'
+```
+
+If auth token is configured in guest runtime metadata, provide it with:
+
+```bash
+./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id> -auth-token '<token>'
+```
 
 ## Testing
 

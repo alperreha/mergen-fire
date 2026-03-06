@@ -88,6 +88,18 @@ func TestNormalizeOptions_DefaultOutputDirFromName(t *testing.T) {
 	}
 }
 
+func TestNormalizeOptions_DefaultVSockValues(t *testing.T) {
+	got, err := normalizeOptions(Options{
+		Image: "nginx:alpine",
+	})
+	if err != nil {
+		t.Fatalf("normalizeOptions failed: %v", err)
+	}
+	if got.VSockGuestPath != defaultVSockGuestPath {
+		t.Fatalf("unexpected vsock guest path: got %q want %q", got.VSockGuestPath, defaultVSockGuestPath)
+	}
+}
+
 func TestComposeStartCommand(t *testing.T) {
 	got := composeStartCommand([]string{"python"}, []string{"app.py"})
 	if len(got) != 2 || got[0] != "python" || got[1] != "app.py" {
@@ -259,6 +271,7 @@ func TestWriteSuggestedVMRequestIncludesPayloadAndEnvDisks(t *testing.T) {
 		"/var/lib/mergen/images/nginx/payload-rootfs.ext4",
 		"/var/lib/mergen/images/nginx/env-rootfs.ext4",
 		8080,
+		false,
 	); err != nil {
 		t.Fatalf("writeSuggestedVMRequest failed: %v", err)
 	}

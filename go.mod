@@ -12,6 +12,15 @@ require (
 )
 
 require (
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/mdlayher/socket v0.2.0 // indirect
+	github.com/mdlayher/vsock v1.1.1 // indirect
+	github.com/spf13/cobra v1.8.1 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+)
+
+require (
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect

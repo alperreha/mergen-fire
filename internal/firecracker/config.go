@@ -3,6 +3,7 @@ package firecracker
 import (
 	"fmt"
 	"net/netip"
+	"path/filepath"
 	"strings"
 
 	"github.com/alperreha/mergen-fire/internal/model"
@@ -62,7 +63,7 @@ func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMCo
 		})
 	}
 
-	return model.VMConfig{
+	cfg := model.VMConfig{
 		BootSource: &model.BootSource{
 			KernelImagePath: model.StringPtr(req.Kernel),
 			BootArgs:        bootArgs,
@@ -81,6 +82,47 @@ func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMCo
 			},
 		},
 	}
+
+	if vsock, ok := resolveVsock(req, meta); ok {
+		cfg.Vsock = vsock
+	}
+
+	return cfg
+}
+
+func resolveVsock(req model.CreateVMRequest, meta model.VMMetadata) (*model.Vsock, bool) {
+	enabled := req.VSockEnabled ||
+		req.VSockGuestCID > 0 ||
+		strings.TrimSpace(req.VSockUDSPath) != "" ||
+		strings.TrimSpace(req.VSockID) != ""
+	if !enabled {
+		return nil, false
+	}
+
+	guestCID := req.VSockGuestCID
+	if guestCID < 3 {
+		guestCID = 3
+	}
+
+	udsPath := strings.TrimSpace(req.VSockUDSPath)
+	if udsPath == "" {
+		runDir := strings.TrimSpace(meta.Paths.RunDir)
+		if runDir == "" {
+			runDir = filepath.Join("/run/mergen", meta.ID)
+		}
+		udsPath = filepath.Join(runDir, "mergen.vsock")
+	}
+
+	vsockID := strings.TrimSpace(req.VSockID)
+	if vsockID == "" {
+		vsockID = "mergen"
+	}
+
+	return &model.Vsock{
+		GuestCid: model.Int64Ptr(guestCID),
+		UdsPath:  model.StringPtr(udsPath),
+		VsockID:  vsockID,
+	}, true
 }
 
 func resolvedBootArgs(requested, guestIP string) string {

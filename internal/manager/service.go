@@ -22,6 +22,8 @@ import (
 	"github.com/alperreha/mergen-fire/internal/systemd"
 )
 
+const defaultBaseAssetsDir = "/var/lib/mergen/base/current"
+
 type Store interface {
 	SaveVM(id string, cfg model.VMConfig, meta model.VMMetadata, hooks model.HooksConfig, env map[string]string) (model.VMPaths, error)
 	Exists(id string) (bool, error)
@@ -57,6 +59,8 @@ func NewService(store Store, systemdClient systemd.Client, hookRunner *hooks.Run
 }
 
 func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (string, error) {
+	req = applyCreateDefaults(req)
+
 	s.logger.Debug(
 		"create vm request received",
 		"rootfs", req.RootFS,
@@ -140,11 +144,11 @@ func (s *Service) CreateVM(ctx context.Context, req model.CreateVMRequest) (stri
 		Hooks:       req.Hooks,
 	}
 
-	vmCfg := firecracker.RenderVMConfig(req, meta)
-	hooksCfg := hooksFromMap(req.Hooks)
 	paths := s.store.PathsFor(vmID)
 	meta.Paths = paths
-	env := s.baseEnv(meta, paths, req.ExtraEnv)
+	vmCfg := firecracker.RenderVMConfig(req, meta)
+	hooksCfg := hooksFromMap(req.Hooks)
+	env := s.baseEnv(meta, paths, vmCfg, req.ExtraEnv)
 	if _, err := s.store.SaveVM(vmID, vmCfg, meta, hooksCfg, env); err != nil {
 		s.logger.Error("failed to persist vm files", "vmID", vmID, "error", err)
 		return "", err
@@ -430,7 +434,7 @@ func (s *Service) ListVMs(ctx context.Context) ([]model.VMSummary, error) {
 	return result, nil
 }
 
-func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, extra map[string]string) map[string]string {
+func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, cfg model.VMConfig, extra map[string]string) map[string]string {
 	env := map[string]string{
 		"MGN_VM_ID":       meta.ID,
 		"MGN_CONFIG_ROOT": filepath.Dir(paths.ConfigDir),
@@ -445,6 +449,17 @@ func (s *Service) baseEnv(meta model.VMMetadata, paths model.VMPaths, extra map[
 		"MGN_GUEST_IP":    meta.GuestIP,
 		"MGN_DATA_DIR":    paths.DataDir,
 		"MGN_LOG_DIR":     paths.LogsDir,
+	}
+	if cfg.Vsock != nil {
+		if udsPath := strings.TrimSpace(model.StringValue(cfg.Vsock.UdsPath)); udsPath != "" {
+			env["MGN_VSOCK_UDS_PATH"] = udsPath
+		}
+		if guestCID := model.Int64Value(cfg.Vsock.GuestCid); guestCID >= 3 {
+			env["MGN_VSOCK_GUEST_CID"] = strconv.FormatInt(guestCID, 10)
+		}
+		if vsockID := strings.TrimSpace(cfg.Vsock.VsockID); vsockID != "" {
+			env["MGN_VSOCK_ID"] = vsockID
+		}
 	}
 	if meta.HTTPPort > 0 {
 		env["MGN_HTTP_PORT"] = strconv.Itoa(meta.HTTPPort)
@@ -569,9 +584,6 @@ func validateCreate(req model.CreateVMRequest) error {
 	if strings.TrimSpace(req.PayloadDisk) == "" {
 		return errors.New("payloadDisk is required")
 	}
-	if strings.TrimSpace(req.EnvDisk) == "" {
-		return errors.New("envDisk is required")
-	}
 	if req.VCPU <= 0 {
 		return errors.New("vcpu must be > 0")
 	}
@@ -588,6 +600,12 @@ func validateCreate(req model.CreateVMRequest) error {
 	}
 	if req.HTTPPort < 0 || req.HTTPPort > 65535 {
 		return fmt.Errorf("invalid httpPort: %d", req.HTTPPort)
+	}
+	if req.VSockGuestCID > 0 && req.VSockGuestCID < 3 {
+		return errors.New("vsockGuestCID must be >= 3")
+	}
+	if udsPath := strings.TrimSpace(req.VSockUDSPath); udsPath != "" && !filepath.IsAbs(udsPath) {
+		return errors.New("vsockUDSPath must be an absolute path")
 	}
 	return nil
 }
@@ -618,4 +636,32 @@ func newUUIDv4() (string, error) {
 		raw[8:10],
 		raw[10:16],
 	), nil
+}
+
+func applyCreateDefaults(req model.CreateVMRequest) model.CreateVMRequest {
+	baseAssetsDir := strings.TrimSpace(getManagerEnv("MGR_BASE_ASSETS_DIR", defaultBaseAssetsDir))
+
+	if strings.TrimSpace(req.Kernel) == "" {
+		req.Kernel = strings.TrimSpace(getManagerEnv("MGR_DEFAULT_KERNEL", filepath.Join(baseAssetsDir, "vmlinux")))
+	}
+	if strings.TrimSpace(req.RootFS) == "" {
+		req.RootFS = strings.TrimSpace(getManagerEnv("MGR_DEFAULT_ROOTFS", filepath.Join(baseAssetsDir, "golden-rootfs.ext4")))
+	}
+	if strings.TrimSpace(req.AgentDisk) == "" {
+		req.AgentDisk = strings.TrimSpace(getManagerEnv("MGR_DEFAULT_AGENT_DISK", filepath.Join(baseAssetsDir, "agent-rootfs.ext4")))
+	}
+	if strings.TrimSpace(req.EnvDisk) == "" {
+		req.EnvDisk = strings.TrimSpace(getManagerEnv("MGR_DEFAULT_ENV_DISK", ""))
+	}
+	return req
+}
+
+func getManagerEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return fallback
 }

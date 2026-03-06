@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alperreha/mergen-fire/internal/vsockcfg"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,6 +33,8 @@ const (
 	defaultEnvFSType        = "ext4"
 	defaultEnvMountPath     = "/mnt/env"
 	defaultEnvFile          = "mergen.env"
+	defaultVSockGuestPath   = "/mnt/agent/mergen-vsock-guest"
+	defaultVSockShell       = "/bin/sh"
 	defaultPathEnv          = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 	defaultTelemetryIntervalSeconds = 10
@@ -56,6 +59,20 @@ type runtimeSpec struct {
 	EnvMountPoint     string   `json:"envMountPoint,omitempty"`
 	EnvReadOnly       bool     `json:"envReadOnly,omitempty"`
 	EnvFile           string   `json:"envFile,omitempty"`
+	VSockEnabled      bool     `json:"vsockEnabled,omitempty"`
+	VSockGuestPath    string   `json:"vsockGuestPath,omitempty"`
+	VSockShell        string   `json:"vsockShell,omitempty"`
+	VSockAuthToken    string   `json:"vsockAuthToken,omitempty"`
+}
+
+type imageMetaSpec struct {
+	Image      string   `json:"image"`
+	Entrypoint []string `json:"entrypoint,omitempty"`
+	Cmd        []string `json:"cmd,omitempty"`
+	StartCmd   []string `json:"startCmd,omitempty"`
+	Env        []string `json:"env,omitempty"`
+	WorkingDir string   `json:"workingDir,omitempty"`
+	User       string   `json:"user,omitempty"`
 }
 
 func main() {
@@ -72,14 +89,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	spec, err := loadRuntimeSpec(runtimePath)
+	spec, specSource, err := resolveRuntimeSpec(runtimePath, bootstrap, logger)
 	if err != nil {
-		logger.Error("load runtime spec failed", "path", runtimePath, "error", err)
+		logger.Error("resolve runtime spec failed", "path", runtimePath, "error", err)
 		os.Exit(1)
 	}
 
 	stopTelemetry := startTelemetry(logger)
 	defer stopTelemetry()
+
+	stopVSockGuest, err := startVSockGuest(spec, logger)
+	if err != nil {
+		logger.Error("start vsock guest failed", "error", err)
+		os.Exit(1)
+	}
+	defer stopVSockGuest()
 
 	if err := mountPayload(spec); err != nil {
 		logger.Error("mount payload failed", "device", spec.PayloadDevice, "mount", spec.PayloadMountPoint, "error", err)
@@ -107,6 +131,7 @@ func main() {
 		"workDir", normalizeWorkingDir(spec.WorkingDir),
 		"payloadMount", spec.PayloadMountPoint,
 		"envDisk", spec.EnvDevice,
+		"specSource", specSource,
 	)
 
 	exitCode, err := runPayload(spec, argv, env)
@@ -128,6 +153,8 @@ func defaultRuntimeSpec() runtimeSpec {
 		EnvMountPoint:     defaultEnvMountPath,
 		EnvReadOnly:       true,
 		EnvFile:           filepath.Join(defaultEnvMountPath, defaultEnvFile),
+		VSockGuestPath:    defaultVSockGuestPath,
+		VSockShell:        defaultVSockShell,
 	}
 }
 
@@ -157,7 +184,62 @@ func loadRuntimeSpec(path string) (runtimeSpec, error) {
 	if spec.EnvFile == "" {
 		spec.EnvFile = filepath.Join(spec.EnvMountPoint, defaultEnvFile)
 	}
+	spec.VSockGuestPath = defaultIfEmpty(spec.VSockGuestPath, defaultVSockGuestPath)
+	spec.VSockShell = defaultIfEmpty(spec.VSockShell, defaultVSockShell)
 
+	return spec, nil
+}
+
+func resolveRuntimeSpec(runtimePath string, bootstrap runtimeSpec, logger *slog.Logger) (runtimeSpec, string, error) {
+	spec, err := loadRuntimeSpec(runtimePath)
+	if err == nil {
+		return spec, "runtime-json", nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return runtimeSpec{}, "", err
+	}
+
+	if logger != nil {
+		logger.Warn("runtime file not found, falling back to payload image metadata", "path", runtimePath)
+	}
+
+	if err := mountPayload(bootstrap); err != nil {
+		return runtimeSpec{}, "", fmt.Errorf("mount payload for metadata fallback: %w", err)
+	}
+
+	metaPath := filepath.Join(bootstrap.PayloadMountPoint, "etc", "mergen", "image-meta.json")
+	spec, err = loadRuntimeSpecFromImageMeta(metaPath, bootstrap)
+	if err != nil {
+		return runtimeSpec{}, "", err
+	}
+	return spec, "payload-image-meta", nil
+}
+
+func loadRuntimeSpecFromImageMeta(path string, bootstrap runtimeSpec) (runtimeSpec, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return runtimeSpec{}, fmt.Errorf("read image metadata %s: %w", path, err)
+	}
+
+	var meta imageMetaSpec
+	if err := json.Unmarshal(body, &meta); err != nil {
+		return runtimeSpec{}, fmt.Errorf("decode image metadata %s: %w", path, err)
+	}
+
+	spec := bootstrap
+	spec.Image = meta.Image
+	spec.Entrypoint = append([]string(nil), meta.Entrypoint...)
+	spec.Cmd = append([]string(nil), meta.Cmd...)
+	spec.StartCmd = append([]string(nil), meta.StartCmd...)
+	spec.Env = append([]string(nil), meta.Env...)
+	spec.WorkingDir = strings.TrimSpace(meta.WorkingDir)
+	spec.User = strings.TrimSpace(meta.User)
+	spec.EnvDevice = ""
+	spec.EnvFile = ""
+
+	if len(spec.StartCmd) == 0 {
+		spec.StartCmd = composeStartCommand(spec.StartCmd, spec.Entrypoint, spec.Cmd)
+	}
 	return spec, nil
 }
 
@@ -199,6 +281,73 @@ func mountDisk(device, mountPoint, fsType string, readOnly bool) error {
 	return nil
 }
 
+func startVSockGuest(spec runtimeSpec, logger *slog.Logger) (func(), error) {
+	if !spec.VSockEnabled {
+		return func() {}, nil
+	}
+
+	guestPath := strings.TrimSpace(spec.VSockGuestPath)
+	if guestPath == "" {
+		guestPath = defaultVSockGuestPath
+	}
+	if _, err := os.Stat(guestPath); err != nil {
+		return nil, fmt.Errorf("vsock guest binary %s: %w", guestPath, err)
+	}
+
+	shellPath := strings.TrimSpace(spec.VSockShell)
+	if shellPath == "" {
+		shellPath = defaultVSockShell
+	}
+
+	args := []string{
+		"-shell", shellPath,
+	}
+	cmd := exec.Command(guestPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if token := strings.TrimSpace(spec.VSockAuthToken); token != "" {
+		cmd.Env = append(cmd.Env, "MERGEN_VSOCK_AUTH_TOKEN="+token)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start vsock guest: %w", err)
+	}
+	logger.Info("vsock guest listener started", "path", guestPath, "channel", vsockcfg.ShellPort)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	return func() {
+		select {
+		case err := <-done:
+			if err != nil {
+				logger.Warn("vsock guest exited", "error", err)
+			}
+			return
+		default:
+		}
+
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				logger.Warn("vsock guest exited", "error", err)
+			}
+		case <-time.After(3 * time.Second):
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			if err := <-done; err != nil {
+				logger.Warn("vsock guest killed", "error", err)
+			}
+		}
+	}, nil
+}
 func buildRuntimeEnv(spec runtimeSpec) (map[string]string, error) {
 	env := envFromList(os.Environ())
 	mergeMap(env, envFromList(spec.Env))

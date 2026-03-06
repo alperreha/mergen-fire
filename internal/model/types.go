@@ -10,22 +10,26 @@ const (
 )
 
 type CreateVMRequest struct {
-	RootFS      string                 `json:"rootfs"`
-	Kernel      string                 `json:"kernel"`
-	AgentDisk   string                 `json:"agentDisk,omitempty"`
-	PayloadDisk string                 `json:"payloadDisk,omitempty"`
-	DataDisk    string                 `json:"dataDisk,omitempty"`
-	EnvDisk     string                 `json:"envDisk,omitempty"`
-	VCPU        int                    `json:"vcpu"`
-	MemMiB      int                    `json:"memMiB"`
-	Ports       []PortBindingRequest   `json:"ports,omitempty"`
-	HTTPPort    int                    `json:"httpPort,omitempty"`
-	Metadata    map[string]any         `json:"metadata,omitempty"`
-	AutoStart   bool                   `json:"autoStart,omitempty"`
-	BootArgs    string                 `json:"bootArgs,omitempty"`
-	ExtraEnv    map[string]string      `json:"extraEnv,omitempty"`
-	Tags        map[string]string      `json:"tags,omitempty"`
-	Hooks       map[string][]HookEntry `json:"hooks,omitempty"`
+	RootFS        string                 `json:"rootfs"`
+	Kernel        string                 `json:"kernel"`
+	AgentDisk     string                 `json:"agentDisk,omitempty"`
+	PayloadDisk   string                 `json:"payloadDisk,omitempty"`
+	DataDisk      string                 `json:"dataDisk,omitempty"`
+	EnvDisk       string                 `json:"envDisk,omitempty"`
+	VSockEnabled  bool                   `json:"vsockEnabled,omitempty"`
+	VSockGuestCID int64                  `json:"vsockGuestCID,omitempty"`
+	VSockUDSPath  string                 `json:"vsockUDSPath,omitempty"`
+	VSockID       string                 `json:"vsockID,omitempty"`
+	VCPU          int                    `json:"vcpu"`
+	MemMiB        int                    `json:"memMiB"`
+	Ports         []PortBindingRequest   `json:"ports,omitempty"`
+	HTTPPort      int                    `json:"httpPort,omitempty"`
+	Metadata      map[string]any         `json:"metadata,omitempty"`
+	AutoStart     bool                   `json:"autoStart,omitempty"`
+	BootArgs      string                 `json:"bootArgs,omitempty"`
+	ExtraEnv      map[string]string      `json:"extraEnv,omitempty"`
+	Tags          map[string]string      `json:"tags,omitempty"`
+	Hooks         map[string][]HookEntry `json:"hooks,omitempty"`
 }
 
 type PortBindingRequest struct {
