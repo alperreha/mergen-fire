@@ -6,4 +6,4 @@ After=mergen@%i.service
 Type=oneshot
 EnvironmentFile=-/var/lib/mergen/vm.d/%i/env
 Environment=MGN_UNIT_NAME=mergen@%i.service
-ExecStart=/usr/local/bin/mergen-on-failure %i
+ExecStart=/usr/local/bin/mergen-lifecycle on-failure %i

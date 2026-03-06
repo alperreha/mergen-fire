@@ -18,66 +18,66 @@ const (
 func RenderVMConfig(req model.CreateVMRequest, meta model.VMMetadata) model.VMConfig {
 	bootArgs := resolvedBootArgs(req.BootArgs, meta.GuestIP)
 
-	drives := []model.Drive{
+	drives := []*model.Drive{
 		{
-			DriveID:      "rootfs",
-			PathOnHost:   req.RootFS,
-			IsRootDevice: true,
-			IsReadOnly:   false,
+			DriveID:      model.StringPtr("rootfs"),
+			PathOnHost:   model.StringPtr(req.RootFS),
+			IsRootDevice: model.BoolPtr(true),
+			IsReadOnly:   model.BoolPtr(false),
 		},
 	}
 
 	if strings.TrimSpace(req.AgentDisk) != "" {
-		drives = append(drives, model.Drive{
-			DriveID:      "agent",
-			PathOnHost:   req.AgentDisk,
-			IsRootDevice: false,
-			IsReadOnly:   true,
+		drives = append(drives, &model.Drive{
+			DriveID:      model.StringPtr("agent"),
+			PathOnHost:   model.StringPtr(req.AgentDisk),
+			IsRootDevice: model.BoolPtr(false),
+			IsReadOnly:   model.BoolPtr(true),
 		})
 	}
 
 	if strings.TrimSpace(req.PayloadDisk) != "" {
-		drives = append(drives, model.Drive{
-			DriveID:      "payload",
-			PathOnHost:   req.PayloadDisk,
-			IsRootDevice: false,
-			IsReadOnly:   false,
+		drives = append(drives, &model.Drive{
+			DriveID:      model.StringPtr("payload"),
+			PathOnHost:   model.StringPtr(req.PayloadDisk),
+			IsRootDevice: model.BoolPtr(false),
+			IsReadOnly:   model.BoolPtr(false),
 		})
 	}
 
 	if strings.TrimSpace(req.EnvDisk) != "" {
-		drives = append(drives, model.Drive{
-			DriveID:      "env",
-			PathOnHost:   req.EnvDisk,
-			IsRootDevice: false,
-			IsReadOnly:   true,
+		drives = append(drives, &model.Drive{
+			DriveID:      model.StringPtr("env"),
+			PathOnHost:   model.StringPtr(req.EnvDisk),
+			IsRootDevice: model.BoolPtr(false),
+			IsReadOnly:   model.BoolPtr(true),
 		})
 	}
 	if strings.TrimSpace(req.DataDisk) != "" {
-		drives = append(drives, model.Drive{
-			DriveID:      "data",
-			PathOnHost:   req.DataDisk,
-			IsRootDevice: false,
-			IsReadOnly:   false,
+		drives = append(drives, &model.Drive{
+			DriveID:      model.StringPtr("data"),
+			PathOnHost:   model.StringPtr(req.DataDisk),
+			IsRootDevice: model.BoolPtr(false),
+			IsReadOnly:   model.BoolPtr(false),
 		})
 	}
 
 	return model.VMConfig{
-		BootSource: model.BootSource{
-			KernelImagePath: req.Kernel,
+		BootSource: &model.BootSource{
+			KernelImagePath: model.StringPtr(req.Kernel),
 			BootArgs:        bootArgs,
 		},
 		Drives: drives,
-		MachineConfig: model.MachineConfig{
-			VCPUCount:  req.VCPU,
-			MemSizeMiB: req.MemMiB,
-			SMT:        false,
+		MachineConfig: &model.MachineConfig{
+			VcpuCount:  model.Int64Ptr(int64(req.VCPU)),
+			MemSizeMib: model.Int64Ptr(int64(req.MemMiB)),
+			Smt:        model.BoolPtr(false),
 		},
-		NetworkInterfaces: []model.NetworkInterface{
+		NetworkInterfaces: []*model.NetworkInterface{
 			{
-				IfaceID:     "eth0",
-				HostDevName: meta.TapName,
-				GuestMAC:    network.GuestMAC(meta.ID),
+				IfaceID:     model.StringPtr("eth0"),
+				HostDevName: model.StringPtr(meta.TapName),
+				GuestMac:    network.GuestMAC(meta.ID),
 			},
 		},
 	}

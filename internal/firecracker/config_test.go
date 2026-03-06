@@ -21,22 +21,25 @@ func TestRenderVMConfig_Defaults(t *testing.T) {
 
 	cfg := RenderVMConfig(req, meta)
 	expectedBootArgs := "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on ip=172.30.0.2::172.30.0.1:255.255.255.0::eth0:off"
+	if cfg.BootSource == nil {
+		t.Fatalf("boot source is nil")
+	}
 	if cfg.BootSource.BootArgs != expectedBootArgs {
 		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
 	}
-	if cfg.BootSource.KernelImagePath != req.Kernel {
+	if model.StringValue(cfg.BootSource.KernelImagePath) != req.Kernel {
 		t.Fatalf("kernel mismatch")
 	}
 	if len(cfg.Drives) != 1 {
 		t.Fatalf("expected one drive, got %d", len(cfg.Drives))
 	}
-	if !cfg.Drives[0].IsRootDevice {
+	if cfg.Drives[0] == nil || !model.BoolValue(cfg.Drives[0].IsRootDevice) {
 		t.Fatalf("root drive should be root device")
 	}
 	if len(cfg.NetworkInterfaces) != 1 {
 		t.Fatalf("expected one network interface")
 	}
-	if cfg.NetworkInterfaces[0].HostDevName != meta.TapName {
+	if cfg.NetworkInterfaces[0] == nil || model.StringValue(cfg.NetworkInterfaces[0].HostDevName) != meta.TapName {
 		t.Fatalf("tap mismatch")
 	}
 }
@@ -57,6 +60,9 @@ func TestRenderVMConfig_DoesNotDuplicateExistingBootArgs(t *testing.T) {
 
 	cfg := RenderVMConfig(req, meta)
 	expectedBootArgs := "console=ttyS0 init=/init ip=10.0.0.2::10.0.0.1:255.255.255.0::eth0:off"
+	if cfg.BootSource == nil {
+		t.Fatalf("boot source is nil")
+	}
 	if cfg.BootSource.BootArgs != expectedBootArgs {
 		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
 	}
@@ -75,6 +81,9 @@ func TestRenderVMConfig_NoGuestIPKeepsDefaultBootArgs(t *testing.T) {
 	}
 
 	cfg := RenderVMConfig(req, meta)
+	if cfg.BootSource == nil {
+		t.Fatalf("boot source is nil")
+	}
 	if cfg.BootSource.BootArgs != defaultBootArgs {
 		t.Fatalf("unexpected boot args: %q", cfg.BootSource.BootArgs)
 	}
@@ -100,16 +109,16 @@ func TestRenderVMConfig_WithAgentPayloadAndEnvDisks(t *testing.T) {
 	if len(cfg.Drives) != 4 {
 		t.Fatalf("expected 4 drives, got %d", len(cfg.Drives))
 	}
-	if cfg.Drives[0].DriveID != "rootfs" || !cfg.Drives[0].IsRootDevice {
+	if cfg.Drives[0] == nil || model.StringValue(cfg.Drives[0].DriveID) != "rootfs" || !model.BoolValue(cfg.Drives[0].IsRootDevice) {
 		t.Fatalf("unexpected rootfs drive: %#v", cfg.Drives[0])
 	}
-	if cfg.Drives[1].DriveID != "agent" || cfg.Drives[1].IsRootDevice || !cfg.Drives[1].IsReadOnly {
+	if cfg.Drives[1] == nil || model.StringValue(cfg.Drives[1].DriveID) != "agent" || model.BoolValue(cfg.Drives[1].IsRootDevice) || !model.BoolValue(cfg.Drives[1].IsReadOnly) {
 		t.Fatalf("unexpected agent drive: %#v", cfg.Drives[1])
 	}
-	if cfg.Drives[2].DriveID != "payload" || cfg.Drives[2].IsRootDevice || cfg.Drives[2].IsReadOnly {
+	if cfg.Drives[2] == nil || model.StringValue(cfg.Drives[2].DriveID) != "payload" || model.BoolValue(cfg.Drives[2].IsRootDevice) || model.BoolValue(cfg.Drives[2].IsReadOnly) {
 		t.Fatalf("unexpected payload drive: %#v", cfg.Drives[2])
 	}
-	if cfg.Drives[3].DriveID != "env" || cfg.Drives[3].IsRootDevice || !cfg.Drives[3].IsReadOnly {
+	if cfg.Drives[3] == nil || model.StringValue(cfg.Drives[3].DriveID) != "env" || model.BoolValue(cfg.Drives[3].IsRootDevice) || !model.BoolValue(cfg.Drives[3].IsReadOnly) {
 		t.Fatalf("unexpected env drive: %#v", cfg.Drives[3])
 	}
 }

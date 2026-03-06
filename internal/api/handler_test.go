@@ -65,8 +65,11 @@ func TestHandler_GetVMArtifacts(t *testing.T) {
 	if err := json.Unmarshal(vmRec.Body.Bytes(), &vmCfg); err != nil {
 		t.Fatalf("decode vm config response: %v", err)
 	}
-	if vmCfg.BootSource.KernelImagePath != kernelPath {
-		t.Fatalf("vm config kernel mismatch: got %q want %q", vmCfg.BootSource.KernelImagePath, kernelPath)
+	if vmCfg.BootSource == nil {
+		t.Fatalf("vm config boot source is nil")
+	}
+	if model.StringValue(vmCfg.BootSource.KernelImagePath) != kernelPath {
+		t.Fatalf("vm config kernel mismatch: got %q want %q", model.StringValue(vmCfg.BootSource.KernelImagePath), kernelPath)
 	}
 
 	hooksReq := httptest.NewRequest(http.MethodGet, "/v1/vms/"+id+"/hooks.json", nil)

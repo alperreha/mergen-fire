@@ -35,8 +35,8 @@ func TestSaveReadDeleteVM(t *testing.T) {
 		},
 	}
 	cfg := model.VMConfig{
-		BootSource: model.BootSource{
-			KernelImagePath: "/tmp/vmlinux",
+		BootSource: &model.BootSource{
+			KernelImagePath: model.StringPtr("/tmp/vmlinux"),
 			BootArgs:        "console=ttyS0",
 		},
 	}

@@ -24,7 +24,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - [API behavior notes](#api-behavior-notes)
 - [Configuration](#configuration)
 - [Forwarder Configuration](#forwarder-configuration)
-- [Systemd template and scripts](#systemd-template-and-scripts)
+- [Systemd Template and Mergen Lifecycle](#systemd-template-and-mergen-lifecycle)
 - [Testing](#testing)
 
 ## Why this project
@@ -89,7 +89,7 @@ Forwarder design details: `docs/forwarder-design.md`
 - `internal/hooks`: hook runner
 - `deploy/systemd/mergen@.service`: systemd unit template
 - `deploy/systemd/mergen-forwarder.service`: forwarder systemd unit
-- `scripts/mergen-*`: host helper script stubs
+- `cmd/mergen-lifecycle`: lifecycle binary used by systemd hooks
 - `scripts/gen-wildcard-cert.sh`: self-signed wildcard TLS cert generator
 - `scripts/build-golden-rootfs.sh`: Buildroot + BusyBox based golden rootfs (disk0) builder
 
@@ -114,18 +114,14 @@ Optional (only for legacy helper script `scripts/build-rootfs-from-dockerhub.sh`
 
 ### 1. Run `mergend` daemon - Terminal-1
 
-Install systemd template + helper scripts (Linux host):
+Install systemd template + lifecycle binary (Linux host):
 
 ```bash
 sudo install -D -m 0644 deploy/systemd/mergen@.service /etc/systemd/system/mergen@.service
 sudo install -D -m 0644 deploy/systemd/mergen-failure@.service /etc/systemd/system/mergen-failure@.service
-sudo install -m 0755 scripts/mergen-preflight-check /usr/local/bin/mergen-preflight-check
-sudo install -m 0755 scripts/mergen-net-setup /usr/local/bin/mergen-net-setup
-sudo install -m 0755 scripts/mergen-jailer-start /usr/local/bin/mergen-jailer-start
-sudo install -m 0755 scripts/mergen-configure-start /usr/local/bin/mergen-configure-start
-sudo install -m 0755 scripts/mergen-graceful-stop /usr/local/bin/mergen-graceful-stop
-sudo install -m 0755 scripts/mergen-net-cleanup /usr/local/bin/mergen-net-cleanup
-sudo install -m 0755 scripts/mergen-on-failure /usr/local/bin/mergen-on-failure
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o /tmp/mergen-lifecycle ./cmd/mergen-lifecycle
+sudo install -m 0755 /tmp/mergen-lifecycle /usr/local/bin/mergen-lifecycle
 sudo systemctl daemon-reload
 ```
 
@@ -423,26 +419,18 @@ SNI matching:
 
 This SNI rule applies to HTTPS listener routing.
 
-## Systemd template and scripts
+## Systemd Template and Mergen Lifecycle
 
 - Unit template: `deploy/systemd/mergen@.service`
 - Failure hook template: `deploy/systemd/mergen-failure@.service` (`OnFailure=`)
-- Helper scripts:
-  - `scripts/mergen-preflight-check`
-  - `scripts/mergen-net-setup`
-  - `scripts/mergen-jailer-start`
-  - `scripts/mergen-configure-start`
-  - `scripts/mergen-graceful-stop`
-  - `scripts/mergen-net-cleanup`
-  - `scripts/mergen-on-failure`
+- Lifecycle binary:
+  - `cmd/mergen-lifecycle` (install as `/usr/local/bin/mergen-lifecycle`)
+  - Systemd stages: `pre-start`, `start`, `post-start`, `stop`, `post-stop`, `on-failure`
+  - Extra toolkit commands: `status`, `restart`, `pre-delete`, `delete`, `post-delete`
 
-`mergen-jailer-start` and `mergen-configure-start` now run real Firecracker API flow (socket + config + InstanceStart). `mergen-configure-start` also performs best-effort `PUT /entropy` before VM start (disable with `MGN_ENABLE_ENTROPY_DEVICE=0` if needed). `mergen-preflight-check` gates startup via `ExecCondition` and returns a hard failure for missing artifacts so `OnFailure` can trigger. `mergen-on-failure` writes failure signals to journal/stdout plus `MGN_LIFECYCLE_LOG_FILE` (default `/var/log/mergen/vm-lifecycle.log`). Networking scripts are still minimal and should be hardened for production (NAT/filtering/policy).
+`mergen-lifecycle post-start` runs the Firecracker API flow (socket + config + InstanceStart) through `github.com/firecracker-microvm/firecracker-go-sdk`. `mergen-lifecycle stop` sends `SendCtrlAltDel` via SDK as best-effort stop signal. `mergen-lifecycle status` reads instance info from the Firecracker API socket, and `mergen-lifecycle restart` sends the same guest restart action. `MGN_ENABLE_ENTROPY_DEVICE` is kept for forward compatibility, but current pinned SDK version (`v1.0.0`) does not expose the entropy endpoint wrapper yet, so entropy setup is skipped with a debug log. Stage extensions run sequentially and wait for each hook to complete before the next hook starts. Lifecycle stage events are append-only written to `MGN_DAEMON_LOG_FILE` (default `/var/lib/mergen/daemon.log`).
 
-## Firecracker SDK note
-
-`internal/firecracker/configurator_sdk.go` is build-tagged (`firecracker_sdk`) as a placeholder path for `github.com/firecracker-microvm/firecracker-go-sdk`.
-
-Default build path uses the raw Unix-socket configurator and does **not** require the SDK.
+For per-VM extension hooks, create `lifecycle-hooks.json` under the VM config dir (`/var/lib/mergen/vm.d/<vm-id>/lifecycle-hooks.json`) with stage arrays (`preStart`, `postStart`, `preStop`, `postStop`, `preDelete`, `delete`, `postDelete`). You can also pass command hooks via env (`MGN_LIFECYCLE_PRE_START_HOOKS`, `MGN_LIFECYCLE_POST_STOP_HOOKS`, etc.), using `;` as separator. `{{vm_id}}` and `${VM_ID}` tokens are supported.
 
 ## Testing
 
@@ -452,7 +440,65 @@ go test ./...
 
 ## Roadmap
 
-- Real netns/tap/iptables implementation in helper scripts
+- Real netns/tap/iptables implementation in lifecycle stage extensions
 - Graceful stop via vsock guest agent
 - Envoy/Consul integration via hooks
 - Stronger authn/authz for manager API
+
+## How To: Add a Post-Start Extension Hook
+
+This example prints a console log right after the `post-start` stage completes.
+
+### 1. Create extension file
+
+Create `cmd/mergen-lifecycle/hooks/poststart/log_ready.go`:
+
+```go
+package poststart
+
+import (
+	"context"
+	"fmt"
+
+	lifecyclehooks "github.com/alperreha/mergen-fire/cmd/mergen-lifecycle/hooks"
+)
+
+// HandleLogReady runs in post-start stage and prints a human-readable message.
+func HandleLogReady(_ context.Context, req lifecyclehooks.Request) error {
+	fmt.Printf("MERGEN_HOOK_POSTSTART: VM Start Success of vm_id=%s\n", req.VMID)
+	return nil
+}
+```
+
+### 2. Register the hook in lifecycle manager
+
+Open `cmd/mergen-lifecycle/lifecycle.go` and add the new hook to `stagePostStart`:
+
+```go
+manager.Register(string(stagePostStart),
+	lifecyclehooks.Definition{Name: "template", Strict: true, Handle: hookpoststart.HandleTemplate},
+	lifecyclehooks.Definition{Name: "log-ready", Strict: true, Handle: hookpoststart.HandleLogReady},
+)
+```
+
+Hooks run sequentially in the order you register them. The next hook starts only after the previous one finishes.
+
+### 3. Build and install lifecycle binary
+
+```bash
+go build -o /tmp/mergen-lifecycle ./cmd/mergen-lifecycle
+sudo install -m 0755 /tmp/mergen-lifecycle /usr/local/bin/mergen-lifecycle
+```
+
+### 4. Restart VM unit and verify output
+
+```bash
+sudo systemctl restart mergen@<vm-id>.service
+journalctl -u mergen@<vm-id>.service -n 100 --no-pager
+```
+
+Expected line:
+
+```text
+MERGEN_HOOK_POSTSTART: VM Start Success of vm_id=<vm-id>
+```

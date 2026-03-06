@@ -7,18 +7,16 @@ OnFailure=mergen-failure@%i.service
 [Service]
 Type=simple
 EnvironmentFile=-/var/lib/mergen/vm.d/%i/env
-# ExecCondition: start gate; fail fast if required VM artifacts are missing.
-ExecCondition=/usr/local/bin/mergen-preflight-check %i
-# ExecStartPre: host-side netns/tap preparation.
-ExecStartPre=/usr/local/bin/mergen-net-setup %i
-# ExecStart: launch Firecracker process (main unit process).
-ExecStart=/usr/local/bin/mergen-jailer-start %i
-# ExecStartPost: configure Firecracker API and start VM instance.
-ExecStartPost=/usr/local/bin/mergen-configure-start %i
-# ExecStop: best-effort graceful stop path.
-ExecStop=/usr/local/bin/mergen-graceful-stop %i
-# ExecStopPost: cleanup host network artifacts.
-ExecStopPost=/usr/local/bin/mergen-net-cleanup %i
+# Pre-start lifecycle stage: preflight + pre-start extensions (network, disk, custom hooks).
+ExecCondition=/usr/local/bin/mergen-lifecycle pre-start %i
+# Start lifecycle stage: launch Firecracker process as unit main process.
+ExecStart=/usr/local/bin/mergen-lifecycle start %i
+# Post-start lifecycle stage: configure Firecracker API via SDK and trigger InstanceStart.
+ExecStartPost=/usr/local/bin/mergen-lifecycle post-start %i
+# Stop lifecycle stage: run pre-stop hooks and best-effort graceful stop.
+ExecStop=/usr/local/bin/mergen-lifecycle stop %i
+# Post-stop lifecycle stage: cleanup extensions (network cleanup by default).
+ExecStopPost=/usr/local/bin/mergen-lifecycle post-stop %i
 Restart=on-failure
 RestartSec=2
 KillMode=control-group
