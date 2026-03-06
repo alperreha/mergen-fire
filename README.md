@@ -206,37 +206,61 @@ Forwarder behavior:
 
 ### 3. Convert OCI image with `mergen-converter` - Terminal-3
 
-Build in-guest runtime binaries first (`mergen-init`, `mergen-agent`, `mergen-vsock-guest`):
+Build and install guest/base binaries into a versioned base directory:
 
 ```bash
-mkdir -p ./artifacts/sbin-init
+export BASE_DIR="/var/lib/mergen/base"
+export BASE_VERSION="v$(date -u +%Y%m%d%H%M%S)"
 
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -o ./artifacts/sbin-init/sbin-init ./cmd/mergen-init
-
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -o ./artifacts/sbin-init/mergen-agent ./cmd/mergen-agent
-
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -o ./artifacts/sbin-init/mergen-vsock-guest ./cmd/mergen-vsock-guest
-```
-
-Equivalent helper command:
-
-```bash
-./scripts/build-sbin-init-from-go.sh --goos linux --goarch amd64
-```
-
-Install binaries into versioned base directory:
-
-```bash
 sudo ./scripts/build-sbin-init-from-go.sh \
   --goos linux --goarch amd64 \
   --install-base \
-  --base-dir /var/lib/mergen/base
+  --base-dir "${BASE_DIR}" \
+  --base-version "${BASE_VERSION}"
 ```
 
-This creates `/var/lib/mergen/base/<version>/bin/...` and updates `/var/lib/mergen/base/current` symlink by default.
+This installs binaries under `${BASE_DIR}/${BASE_VERSION}/bin/`:
+
+- `sbin-init`
+- `mergen-agent`
+- `mergen-vsock-guest`
+- optional: `mergen-supervisor`, `mergen-telemetry` (built only if corresponding `cmd/...` has Go files)
+
+And updates `${BASE_DIR}/current -> ${BASE_VERSION}` symlink (unless `--no-current-link` is used).
+
+Place immutable base assets into the same version directory:
+
+```bash
+export BASE_DIR="/var/lib/mergen/base"
+export BASE_VERSION="v20260306120000" # example
+
+sudo install -d -m 0755 "${BASE_DIR}/${BASE_VERSION}"
+sudo install -m 0444 /path/to/vmlinux "${BASE_DIR}/${BASE_VERSION}/vmlinux"
+sudo install -m 0444 /path/to/golden-rootfs.ext4 "${BASE_DIR}/${BASE_VERSION}/golden-rootfs.ext4"
+sudo install -m 0444 /path/to/agent-rootfs.ext4 "${BASE_DIR}/${BASE_VERSION}/agent-rootfs.ext4"
+# optional env disk:
+sudo install -m 0444 /path/to/env-rootfs.ext4 "${BASE_DIR}/${BASE_VERSION}/env-rootfs.ext4"
+
+sudo ln -sfn "${BASE_VERSION}" "${BASE_DIR}/current"
+```
+
+Only binaries and disk/kernel artifacts should be placed in `/var/lib/mergen/base/...` (do not place README/docs there).
+
+Host-side binaries are separate and should be installed to `/usr/local/bin` (example set):
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergend ./cmd/mergend
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-lifecycle ./cmd/mergen-lifecycle
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-forwarder ./cmd/mergen-forwarder
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-converter ./cmd/mergen-converter
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-vsock-host ./cmd/mergen-vsock-host
+
+sudo install -m 0755 /tmp/mergend /usr/local/bin/mergend
+sudo install -m 0755 /tmp/mergen-lifecycle /usr/local/bin/mergen-lifecycle
+sudo install -m 0755 /tmp/mergen-forwarder /usr/local/bin/mergen-forwarder
+sudo install -m 0755 /tmp/mergen-converter /usr/local/bin/mergen-converter
+sudo install -m 0755 /tmp/mergen-vsock-host /usr/local/bin/mergen-vsock-host
+```
 
 Optional: build a reusable BusyBox-based golden rootfs (disk0) with Buildroot:
 
@@ -332,7 +356,16 @@ go run ./cmd/mergen-converter doctor --json
 - `agent-rootfs.ext4`
 - `bin/sbin-init`
 - `bin/mergen-agent`
-- optional: `env-rootfs.ext4`, `bin/mergen-vsock-guest`, `mergen-vsock-host` in `PATH`
+- `base/current` symlink integrity (`current -> <version>`) when `--base-dir` ends with `current`
+- optional: `env-rootfs.ext4`, `bin/mergen-vsock-guest`, `bin/mergen-supervisor`, `bin/mergen-telemetry`, `mergen-vsock-host` in `PATH`
+
+`doctor` does not check payload rootfs because payload is image-specific and provided at VM create time.
+
+CLI output uses emojis for readability:
+
+- `✅ PASS`
+- `❌ FAIL`
+- `⚠️ WARN`
 
 ### 4. End-to-end test with API and curl - Terminal-4
 

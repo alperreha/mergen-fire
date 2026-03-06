@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'HELP'
-Build Go-based mergen init/agent binaries and place them into artifacts for mergen-converter.
+Build Go-based mergen guest/base binaries and place them into artifacts for mergen-converter.
 
 Usage:
   build-sbin-init-from-go.sh [options]
@@ -137,6 +137,7 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_PATH="${OUTPUT_DIR}/${OUTPUT_NAME}"
+EXTRA_BINARIES=()
 
 BASE_LDFLAGS="-s -w"
 if [[ -n "${USER_LDFLAGS}" ]]; then
@@ -145,7 +146,7 @@ else
   LDFLAGS_COMBINED="${BASE_LDFLAGS}"
 fi
 
-echo "building cmd/mergen-init (+ agent + vsock-guest)"
+echo "building guest/base binaries (init + agent + vsock-guest)"
 echo "  target: ${TARGET_GOOS}/${TARGET_GOARCH}"
 echo "  cgo:    ${CGO_VALUE}"
 echo "  go:     ${GO_BIN}"
@@ -159,16 +160,41 @@ build_cmd() {
     "${GO_BIN}" build -trimpath -ldflags "${LDFLAGS_COMBINED}" -o "${out}" "${pkg}"
 }
 
-(
-  cd "${REPO_ROOT}"
-  build_cmd ./cmd/mergen-init "${OUTPUT_PATH}"
-  build_cmd ./cmd/mergen-agent "${OUTPUT_DIR}/mergen-agent"
-  build_cmd ./cmd/mergen-vsock-guest "${OUTPUT_DIR}/mergen-vsock-guest"
-)
+package_has_go_files() {
+  local pkg="${1#./}"
+  local dir="${REPO_ROOT}/${pkg}"
+  if [[ ! -d "${dir}" ]]; then
+    return 1
+  fi
+  compgen -G "${dir}/*.go" >/dev/null
+}
+
+pushd "${REPO_ROOT}" >/dev/null
+build_cmd ./cmd/mergen-init "${OUTPUT_PATH}"
+build_cmd ./cmd/mergen-agent "${OUTPUT_DIR}/mergen-agent"
+build_cmd ./cmd/mergen-vsock-guest "${OUTPUT_DIR}/mergen-vsock-guest"
+
+if package_has_go_files ./cmd/mergen-supervisor; then
+  build_cmd ./cmd/mergen-supervisor "${OUTPUT_DIR}/mergen-supervisor"
+  EXTRA_BINARIES+=("mergen-supervisor")
+else
+  echo "  - skip ./cmd/mergen-supervisor (no Go files)"
+fi
+
+if package_has_go_files ./cmd/mergen-telemetry; then
+  build_cmd ./cmd/mergen-telemetry "${OUTPUT_DIR}/mergen-telemetry"
+  EXTRA_BINARIES+=("mergen-telemetry")
+else
+  echo "  - skip ./cmd/mergen-telemetry (no Go files)"
+fi
+popd >/dev/null
 
 chmod +x "${OUTPUT_PATH}"
 chmod +x "${OUTPUT_DIR}/mergen-agent"
 chmod +x "${OUTPUT_DIR}/mergen-vsock-guest"
+for extra_bin in "${EXTRA_BINARIES[@]}"; do
+  chmod +x "${OUTPUT_DIR}/${extra_bin}"
+done
 
 GIT_SHA="unknown"
 if command -v git >/dev/null 2>&1; then
@@ -179,11 +205,17 @@ if [[ -z "${BASE_VERSION}" ]]; then
   BASE_VERSION="${GIT_SHA}-$(date -u +"%Y%m%d%H%M%S")"
 fi
 
+EXTRA_BINARIES_CSV=""
+if [[ ${#EXTRA_BINARIES[@]} -gt 0 ]]; then
+  EXTRA_BINARIES_CSV="$(IFS=,; echo "${EXTRA_BINARIES[*]}")"
+fi
+
 cat > "${OUTPUT_DIR}/build-info.txt" <<INFO
 source=cmd/mergen-init
 binary=${OUTPUT_PATH}
 agent_binary=${OUTPUT_DIR}/mergen-agent
 vsock_guest_binary=${OUTPUT_DIR}/mergen-vsock-guest
+extra_binaries=${EXTRA_BINARIES_CSV}
 goos=${TARGET_GOOS}
 goarch=${TARGET_GOARCH}
 cgo_enabled=${CGO_VALUE}
@@ -200,8 +232,14 @@ if [[ "${INSTALL_BASE}" == "1" ]]; then
   cp "${OUTPUT_PATH}" "${BASE_BIN_DIR}/sbin-init"
   cp "${OUTPUT_DIR}/mergen-agent" "${BASE_BIN_DIR}/mergen-agent"
   cp "${OUTPUT_DIR}/mergen-vsock-guest" "${BASE_BIN_DIR}/mergen-vsock-guest"
+  for extra_bin in "${EXTRA_BINARIES[@]}"; do
+    cp "${OUTPUT_DIR}/${extra_bin}" "${BASE_BIN_DIR}/${extra_bin}"
+  done
   cp "${OUTPUT_DIR}/build-info.txt" "${BASE_VERSION_DIR}/build-info.txt"
   chmod +x "${BASE_BIN_DIR}/sbin-init" "${BASE_BIN_DIR}/mergen-agent" "${BASE_BIN_DIR}/mergen-vsock-guest"
+  for extra_bin in "${EXTRA_BINARIES[@]}"; do
+    chmod +x "${BASE_BIN_DIR}/${extra_bin}"
+  done
 
   if [[ "${UPDATE_CURRENT_LINK}" == "1" ]]; then
     ln -sfn "${BASE_VERSION}" "${BASE_DIR}/current"
@@ -213,6 +251,11 @@ echo "build completed"
 echo "  binary: ${OUTPUT_PATH}"
 echo "  agent: ${OUTPUT_DIR}/mergen-agent"
 echo "  vsock guest: ${OUTPUT_DIR}/mergen-vsock-guest"
+if [[ ${#EXTRA_BINARIES[@]} -gt 0 ]]; then
+  for extra_bin in "${EXTRA_BINARIES[@]}"; do
+    echo "  ${extra_bin}: ${OUTPUT_DIR}/${extra_bin}"
+  done
+fi
 echo "  info:   ${OUTPUT_DIR}/build-info.txt"
 if [[ "${INSTALL_BASE}" == "1" ]]; then
   echo "  base:   ${BASE_DIR}/${BASE_VERSION}"

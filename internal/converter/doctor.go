@@ -23,11 +23,12 @@ type DoctorCheck struct {
 }
 
 type DoctorReport struct {
-	BaseDir        string        `json:"baseDir"`
-	Checks         []DoctorCheck `json:"checks"`
-	Passed         bool          `json:"passed"`
-	FailedRequired int           `json:"failedRequired"`
-	Warnings       int           `json:"warnings"`
+	BaseDir         string        `json:"baseDir"`
+	ResolvedBaseDir string        `json:"resolvedBaseDir,omitempty"`
+	Checks          []DoctorCheck `json:"checks"`
+	Passed          bool          `json:"passed"`
+	FailedRequired  int           `json:"failedRequired"`
+	Warnings        int           `json:"warnings"`
 }
 
 func RunDoctor(opts DoctorOptions) DoctorReport {
@@ -47,6 +48,14 @@ func RunDoctor(opts DoctorOptions) DoctorReport {
 		}
 	}
 
+	if filepath.Base(baseDir) == "current" {
+		symlinkCheck, resolvedDir := checkCurrentSymlink("base-current-symlink", baseDir, true)
+		appendCheck(symlinkCheck)
+		if symlinkCheck.Status == "pass" && resolvedDir != "" {
+			report.ResolvedBaseDir = resolvedDir
+		}
+	}
+
 	appendCheck(checkDirExists("base-dir", baseDir, true))
 	appendCheck(checkRegularFile("kernel", filepath.Join(baseDir, "vmlinux"), true))
 	appendCheck(checkExt4Image("golden-rootfs-ext4", filepath.Join(baseDir, "golden-rootfs.ext4"), true))
@@ -57,11 +66,68 @@ func RunDoctor(opts DoctorOptions) DoctorReport {
 
 	appendCheck(checkExecutable("sbin-init", filepath.Join(baseDir, "bin", "sbin-init"), true))
 	appendCheck(checkExecutable("mergen-agent", filepath.Join(baseDir, "bin", "mergen-agent"), true))
+	appendCheck(checkExecutable("mergen-supervisor", filepath.Join(baseDir, "bin", "mergen-supervisor"), false))
+	appendCheck(checkExecutable("mergen-telemetry", filepath.Join(baseDir, "bin", "mergen-telemetry"), false))
 	appendCheck(checkExecutable("mergen-vsock-guest", filepath.Join(baseDir, "bin", "mergen-vsock-guest"), false))
 	appendCheck(checkBinaryInPath("mergen-vsock-host", opts.RequireVSockHost))
 
 	report.Passed = report.FailedRequired == 0
 	return report
+}
+
+func checkCurrentSymlink(name, path string, required bool) (DoctorCheck, string) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return buildMissingCheck(name, path, required, err), ""
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return DoctorCheck{
+			Name:     name,
+			Path:     path,
+			Status:   "fail",
+			Required: required,
+			Message:  "expected a symlink (current -> <version>)",
+		}, ""
+	}
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return DoctorCheck{
+			Name:     name,
+			Path:     path,
+			Status:   "fail",
+			Required: required,
+			Message:  fmt.Sprintf("resolve symlink failed: %v", err),
+		}, ""
+	}
+
+	targetInfo, err := os.Stat(resolved)
+	if err != nil {
+		return DoctorCheck{
+			Name:     name,
+			Path:     path,
+			Status:   "fail",
+			Required: required,
+			Message:  fmt.Sprintf("symlink target missing: %v", err),
+		}, resolved
+	}
+	if !targetInfo.IsDir() {
+		return DoctorCheck{
+			Name:     name,
+			Path:     path,
+			Status:   "fail",
+			Required: required,
+			Message:  "symlink target is not a directory",
+		}, resolved
+	}
+
+	return DoctorCheck{
+		Name:     name,
+		Path:     path,
+		Status:   "pass",
+		Required: required,
+		Message:  fmt.Sprintf("symlink points to %s", resolved),
+	}, resolved
 }
 
 func checkDirExists(name, path string, required bool) DoctorCheck {

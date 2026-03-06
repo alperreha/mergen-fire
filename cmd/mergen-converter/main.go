@@ -216,18 +216,54 @@ func runDoctor(opts doctorOptions) error {
 		_, _ = fmt.Fprintln(os.Stdout, string(body))
 	} else {
 		_, _ = fmt.Fprintf(os.Stdout, "doctor base dir: %s\n", report.BaseDir)
+		if report.ResolvedBaseDir != "" && report.ResolvedBaseDir != report.BaseDir {
+			_, _ = fmt.Fprintf(os.Stdout, "resolved base dir: %s\n", report.ResolvedBaseDir)
+		}
 		for _, check := range report.Checks {
-			_, _ = fmt.Fprintf(os.Stdout, "[%s] %s", check.Status, check.Name)
+			_, _ = fmt.Fprintf(os.Stdout, "[%s %s] %s", statusEmoji(check.Status), statusLabel(check.Status), check.Name)
 			if check.Path != "" {
 				_, _ = fmt.Fprintf(os.Stdout, " (%s)", check.Path)
 			}
 			_, _ = fmt.Fprintf(os.Stdout, " -> %s\n", check.Message)
 		}
-		_, _ = fmt.Fprintf(os.Stdout, "summary: passed=%t failed_required=%d warnings=%d\n", report.Passed, report.FailedRequired, report.Warnings)
+		_, _ = fmt.Fprintf(os.Stdout, "summary: %s passed=%t failed_required=%d warnings=%d\n", summaryEmoji(report.Passed), report.Passed, report.FailedRequired, report.Warnings)
 	}
 
 	if !report.Passed {
 		return fmt.Errorf("doctor failed: %d required check(s) failed", report.FailedRequired)
 	}
 	return nil
+}
+
+func statusEmoji(status string) string {
+	switch status {
+	case "pass":
+		return "✅"
+	case "fail":
+		return "❌"
+	case "warn":
+		return "⚠️"
+	default:
+		return "•"
+	}
+}
+
+func statusLabel(status string) string {
+	switch status {
+	case "pass":
+		return "PASS"
+	case "fail":
+		return "FAIL"
+	case "warn":
+		return "WARN"
+	default:
+		return "INFO"
+	}
+}
+
+func summaryEmoji(passed bool) string {
+	if passed {
+		return "✅"
+	}
+	return "❌"
 }
