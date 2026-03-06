@@ -607,6 +607,20 @@ Enable guest-side debug logs with environment variable:
 export MERGEN_VSOCK_DEBUG=1
 ```
 
+Troubleshooting when host appears stuck on dial:
+
+- `udsPath=""` in host debug output is normal when `-uds-path` is not passed; it means host will resolve path from `vm.json`.
+- Verify Firecracker vsock device exists in VM config:
+  - `jq '.vsock' /var/lib/mergen/vm.d/<vm-id>/vm.json`
+- Verify guest runtime actually enables vsock listener:
+  - follow VM logs: `journalctl -fu mergen@<vm-id>.service`
+  - look for:
+    - `runtime spec resolved ... vsockEnabled=true`
+    - `vsock guest listener started`
+- If logs show `vsockEnabled=false`, guest listener is intentionally not started.
+  Most common reason: `mergen.runtime.json` is not mounted from env disk.
+- New host flag `-dial-timeout` prevents infinite wait and returns a clear timeout error.
+
 If auth token is configured in guest runtime metadata, provide it with:
 
 ```bash

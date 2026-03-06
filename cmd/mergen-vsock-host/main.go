@@ -33,6 +33,7 @@ func main() {
 		udsPath        string
 		authToken      string
 		nonInteractive string
+		dialTimeout    time.Duration
 		retryTimeout   time.Duration
 		retryInterval  time.Duration
 		commandTimeout time.Duration
@@ -45,6 +46,7 @@ func main() {
 	flag.StringVar(&udsPath, "uds-path", "", "Firecracker vsock UDS path (if empty, resolved from vm.json)")
 	flag.StringVar(&authToken, "auth-token", "", "Optional auth token sent as 'AUTH <token>'")
 	flag.StringVar(&nonInteractive, "command", "", "Optional one-shot command to run and exit")
+	flag.DurationVar(&dialTimeout, "dial-timeout", 15*time.Second, "Total dial timeout for vsock handshake (0 disables deadline)")
 	flag.DurationVar(&retryTimeout, "retry-timeout", 15*time.Second, "VSock dial retry timeout")
 	flag.DurationVar(&retryInterval, "retry-interval", 100*time.Millisecond, "VSock dial retry interval")
 	flag.DurationVar(&commandTimeout, "command-timeout", 30*time.Second, "One-shot command timeout")
@@ -65,15 +67,27 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	debugf(debug, "dialing vsock channel=%d retryTimeout=%s retryInterval=%s", vsockcfg.ShellPort, retryTimeout, retryInterval)
+	debugf(debug, "dialing vsock channel=%d dialTimeout=%s retryTimeout=%s retryInterval=%s", vsockcfg.ShellPort, dialTimeout, retryTimeout, retryInterval)
+	dialCtx := ctx
+	cancelDial := func() {}
+	if dialTimeout > 0 {
+		dialCtxWithTimeout, cancel := context.WithTimeout(ctx, dialTimeout)
+		dialCtx = dialCtxWithTimeout
+		cancelDial = cancel
+	}
+	defer cancelDial()
+
 	conn, err := fvsock.DialContext(
-		ctx,
+		dialCtx,
 		resolvedUDS,
 		vsockcfg.ShellPort,
 		fvsock.WithRetryTimeout(retryTimeout),
 		fvsock.WithRetryInterval(retryInterval),
 	)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			die("vsock dial timeout after %s (uds=%s, channel=%d). guest listener may be down or vsock guest not started", dialTimeout, resolvedUDS, vsockcfg.ShellPort)
+		}
 		die("vsock dial failed: %v", err)
 	}
 	defer conn.Close()

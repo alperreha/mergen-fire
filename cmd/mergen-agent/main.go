@@ -94,6 +94,14 @@ func main() {
 		logger.Error("resolve runtime spec failed", "path", runtimePath, "error", err)
 		os.Exit(1)
 	}
+	logger.Info(
+		"runtime spec resolved",
+		"source", specSource,
+		"runtimePath", runtimePath,
+		"envDevice", spec.EnvDevice,
+		"vsockEnabled", spec.VSockEnabled,
+		"vsockGuestPath", spec.VSockGuestPath,
+	)
 
 	stopTelemetry := startTelemetry(logger)
 	defer stopTelemetry()
@@ -283,6 +291,7 @@ func mountDisk(device, mountPoint, fsType string, readOnly bool) error {
 
 func startVSockGuest(spec runtimeSpec, logger *slog.Logger) (func(), error) {
 	if !spec.VSockEnabled {
+		logger.Info("vsock guest disabled in runtime spec")
 		return func() {}, nil
 	}
 
