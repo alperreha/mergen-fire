@@ -205,16 +205,37 @@ func runOneShot(conn io.ReadWriteCloser, reader *bufio.Reader, command string, t
 	if _, err := io.WriteString(conn, frame); err != nil {
 		return fmt.Errorf("write one-shot frame: %w", err)
 	}
-	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-		_ = cw.CloseWrite()
-	}
 
 	exitCode := 0
+	linesRead := 0
+	eofBeforeDone := false
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if line != "" {
+					linesRead++
+					trimmed := strings.TrimRight(line, "\r\n")
+					if strings.HasPrefix(trimmed, vsockcfg.ExecDonePrefix) {
+						codeRaw := strings.TrimSpace(strings.TrimPrefix(trimmed, vsockcfg.ExecDonePrefix))
+						parsed, parseErr := strconv.Atoi(codeRaw)
+						if parseErr != nil {
+							return fmt.Errorf("invalid done marker %q: %w", trimmed, parseErr)
+						}
+						exitCode = parsed
+						break
+					}
+					if strings.HasPrefix(trimmed, "ERR ") {
+						return fmt.Errorf("guest error: %s", strings.TrimSpace(trimmed))
+					}
+					_, _ = fmt.Fprint(os.Stdout, line)
+				}
+				eofBeforeDone = true
+				break
+			}
 			return fmt.Errorf("read command output: %w", err)
 		}
+		linesRead++
 		trimmed := strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(trimmed, vsockcfg.ExecDonePrefix) {
 			codeRaw := strings.TrimSpace(strings.TrimPrefix(trimmed, vsockcfg.ExecDonePrefix))
@@ -225,7 +246,14 @@ func runOneShot(conn io.ReadWriteCloser, reader *bufio.Reader, command string, t
 			exitCode = parsed
 			break
 		}
+		if strings.HasPrefix(trimmed, "ERR ") {
+			return fmt.Errorf("guest error: %s", strings.TrimSpace(trimmed))
+		}
 		_, _ = fmt.Fprint(os.Stdout, line)
+	}
+
+	if eofBeforeDone {
+		return fmt.Errorf("connection closed before done marker (lines_read=%d)", linesRead)
 	}
 
 	debugf(debug, "one-shot command completed exitCode=%d", exitCode)

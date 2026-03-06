@@ -585,8 +585,13 @@ If you use converter with `-vsock-enable`, runtime metadata includes:
 - `vsockEnabled`
 - `vsockGuestPath`
 - `vsockAuthToken` (if provided)
+- `vsockDebug` (optional, enables guest-side connection logs)
 
 `mergen-agent` starts `mergen-vsock-guest` automatically when `vsockEnabled=true`.
+When `vsockDebug=true` (or `MERGEN_VSOCK_DEBUG=1`), guest logs include connection lifecycle lines such as:
+- `accepted connection id=...`
+- `command frame received ...`
+- `one-shot completed exitCode=...`
 
 ### 3. Connect from host
 

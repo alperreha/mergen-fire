@@ -63,6 +63,7 @@ type runtimeSpec struct {
 	VSockGuestPath    string   `json:"vsockGuestPath,omitempty"`
 	VSockShell        string   `json:"vsockShell,omitempty"`
 	VSockAuthToken    string   `json:"vsockAuthToken,omitempty"`
+	VSockDebug        bool     `json:"vsockDebug,omitempty"`
 }
 
 type imageMetaSpec struct {
@@ -101,6 +102,7 @@ func main() {
 		"envDevice", spec.EnvDevice,
 		"vsockEnabled", spec.VSockEnabled,
 		"vsockGuestPath", spec.VSockGuestPath,
+		"vsockDebug", spec.VSockDebug,
 	)
 
 	stopTelemetry := startTelemetry(logger)
@@ -311,6 +313,10 @@ func startVSockGuest(spec runtimeSpec, logger *slog.Logger) (func(), error) {
 	args := []string{
 		"-shell", shellPath,
 	}
+	debugEnabled := spec.VSockDebug || boolFromEnv(vsockcfg.DebugEnvVar)
+	if debugEnabled {
+		args = append(args, "-debug")
+	}
 	cmd := exec.Command(guestPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -318,11 +324,14 @@ func startVSockGuest(spec runtimeSpec, logger *slog.Logger) (func(), error) {
 	if token := strings.TrimSpace(spec.VSockAuthToken); token != "" {
 		cmd.Env = append(cmd.Env, "MERGEN_VSOCK_AUTH_TOKEN="+token)
 	}
+	if debugEnabled {
+		cmd.Env = append(cmd.Env, vsockcfg.DebugEnvVar+"=1")
+	}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start vsock guest: %w", err)
 	}
-	logger.Info("vsock guest listener started", "path", guestPath, "channel", vsockcfg.ShellPort)
+	logger.Info("vsock guest listener started", "path", guestPath, "channel", vsockcfg.ShellPort, "debug", debugEnabled)
 
 	done := make(chan error, 1)
 	go func() {
@@ -590,6 +599,16 @@ func defaultIfEmpty(in, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(in)
+}
+
+func boolFromEnv(key string) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func startTelemetry(logger *slog.Logger) func() {
