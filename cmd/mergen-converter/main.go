@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -41,6 +42,9 @@ type convertOptions struct {
 	Name              string
 	SizeMiB           int
 	AgentSizeMiB      int
+	AgentRootFS       bool
+	AgentRootFSSize   int
+	AgentRootFSOutput string
 	SkipPull          bool
 	DeleteRootFS      bool
 	SbinInitPath      string
@@ -73,11 +77,14 @@ func newConvertCmd() *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&opts.Image, "image", "", "Docker/OCI image reference (required), e.g. nginx:alpine")
+	f.StringVar(&opts.Image, "image", "", "Docker/OCI image reference (required unless --agent-rootfs is used), e.g. nginx:alpine")
 	f.StringVar(&opts.OutputDir, "output-dir", "", "Output directory (default: /var/lib/mergen/images/<image-ref>)")
 	f.StringVar(&opts.Name, "name", "", "Output name (used when output-dir is empty)")
 	f.IntVar(&opts.SizeMiB, "size-mib", 0, "Payload ext4 image size in MiB (0 = auto)")
 	f.IntVar(&opts.AgentSizeMiB, "agent-size-mib", 0, "Agent ext4 image size in MiB (legacy mode only)")
+	f.BoolVar(&opts.AgentRootFS, "agent-rootfs", false, "Build agent-rootfs.ext4 from <base-assets-dir>/bin and exit")
+	f.IntVar(&opts.AgentRootFSSize, "agent-rootfs-size-mib", 0, "Agent rootfs ext4 size in MiB for --agent-rootfs mode (0 = auto)")
+	f.StringVar(&opts.AgentRootFSOutput, "agent-rootfs-output", "", "Output ext4 path for --agent-rootfs mode (default: <base-assets-dir>/agent-rootfs.ext4)")
 	f.BoolVar(&opts.SkipPull, "skip-pull", false, "Skip remote pull and reuse previously cached image blobs in output-dir/image-cache")
 	f.BoolVar(&opts.DeleteRootFS, "delete-rootfs", false, "Delete converted rootfs output for the selected image and exit")
 	f.StringVar(&opts.SbinInitPath, "sbin-init", "./artifacts/sbin-init/sbin-init", "Path to mergen-init binary (legacy mode only)")
@@ -97,7 +104,6 @@ func newConvertCmd() *cobra.Command {
 	f.StringVar(&opts.EnvLine, "env-line", "Mergen=is super", "Single KEY=VALUE line written to env disk (legacy mode only)")
 	f.StringVar(&opts.LogLevel, "log-level", "info", "Log level (debug|info|warn|error)")
 	f.StringVar(&opts.LogFormat, "log-format", "console", "Log format (console|json|text)")
-	_ = cmd.MarkFlagRequired("image")
 
 	return cmd
 }
@@ -105,6 +111,36 @@ func newConvertCmd() *cobra.Command {
 func runConvert(opts convertOptions) error {
 	logger := logging.New(opts.LogLevel, opts.LogFormat).With("component", "mergen-converter")
 	runner := converter.NewRunner(logger)
+
+	if opts.AgentRootFS && opts.DeleteRootFS {
+		return fmt.Errorf("--agent-rootfs and --delete-rootfs cannot be used together")
+	}
+
+	if opts.AgentRootFS {
+		result, err := runner.BuildAgentRootFS(context.Background(), converter.AgentRootFSOptions{
+			BaseDir:    opts.BaseAssetsDir,
+			OutputPath: opts.AgentRootFSOutput,
+			SizeMiB:    opts.AgentRootFSSize,
+		})
+		if err != nil {
+			return fmt.Errorf("agent rootfs build failed: %w", err)
+		}
+
+		_, _ = fmt.Fprintf(os.Stdout, "mode: agent-rootfs\n")
+		_, _ = fmt.Fprintf(os.Stdout, "base dir: %s\n", result.BaseDir)
+		_, _ = fmt.Fprintf(os.Stdout, "base bin dir: %s\n", result.BaseBinDir)
+		_, _ = fmt.Fprintf(os.Stdout, "agent rootfs ext4: %s\n", result.Ext4Path)
+		_, _ = fmt.Fprintf(os.Stdout, "size mib: %d\n", result.SizeMiB)
+		_, _ = fmt.Fprintf(os.Stdout, "files: %s\n", strings.Join(result.Files, ", "))
+		if result.ModeChangedToReadOnly {
+			_, _ = fmt.Fprintf(os.Stdout, "readonly: true\n")
+		}
+		return nil
+	}
+
+	if strings.TrimSpace(opts.Image) == "" {
+		return fmt.Errorf("--image is required (or use --agent-rootfs mode)")
+	}
 
 	if opts.DeleteRootFS {
 		result, err := runner.Delete(context.Background(), converter.DeleteOptions{

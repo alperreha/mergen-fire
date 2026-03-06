@@ -299,6 +299,28 @@ go run ./cmd/mergen-converter \
   -vsock-enable
 ```
 
+Generate or refresh `agent-rootfs.ext4` directly from base binaries (`/var/lib/mergen/base/<version>/bin`):
+
+```bash
+go run ./cmd/mergen-converter \
+  convert \
+  --agent-rootfs \
+  --base-assets-dir /var/lib/mergen/base/current
+```
+
+Optional output path and size:
+
+```bash
+go run ./cmd/mergen-converter \
+  convert \
+  --agent-rootfs \
+  --base-assets-dir /var/lib/mergen/base/current \
+  --agent-rootfs-output /var/lib/mergen/base/current/agent-rootfs.ext4 \
+  --agent-rootfs-size-mib 64
+```
+
+`--agent-rootfs` mode does not pull image and does not build payload; it only builds mountable ext4 agent disk from base `bin` binaries and marks output as read-only.
+
 `mergen-converter` pulls image layers natively with `containers/image` (`go.podman.io/image/v5`) and does not execute Docker CLI.
 Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion run.
 Default behavior creates only payload artifacts (`payload-rootfs/`, `payload-rootfs.ext4`, metadata files).  
