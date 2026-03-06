@@ -15,6 +15,7 @@ Options:
   --base-dir PATH       Base directory root (default: /var/lib/mergen/base)
   --base-version NAME   Base version directory name (default: auto from git sha + utc time)
   --no-current-link     Do not update <base-dir>/current symlink
+  --go-bin PATH         Absolute go binary path (overrides PATH lookup)
   --goos OS             Target GOOS (default: linux)
   --goarch ARCH         Target GOARCH (default: amd64)
   --cgo-enabled 0|1     CGO_ENABLED value (default: 0)
@@ -49,6 +50,7 @@ TARGET_GOOS="linux"
 TARGET_GOARCH="amd64"
 CGO_VALUE="0"
 USER_LDFLAGS=""
+GO_BIN_OVERRIDE="${GO_BIN:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --goos)
       TARGET_GOOS="${2:-}"
+      shift 2
+      ;;
+    --go-bin)
+      GO_BIN_OVERRIDE="${2:-}"
       shift 2
       ;;
     --goarch)
@@ -125,14 +131,75 @@ if [[ "${INSTALL_BASE}" != "0" && "${INSTALL_BASE}" != "1" ]]; then
   exit 1
 fi
 
-require_cmd go
 require_cmd chmod
 require_cmd mkdir
 require_cmd cp
 
-GO_BIN="$(go env GOROOT)/bin/go"
-if [[ ! -x "${GO_BIN}" ]]; then
-  GO_BIN="$(command -v go)"
+resolve_go_bin() {
+  local override="${GO_BIN_OVERRIDE:-}"
+  if [[ -n "${override}" ]]; then
+    if [[ -x "${override}" ]]; then
+      echo "${override}"
+      return 0
+    fi
+    if command -v "${override}" >/dev/null 2>&1; then
+      command -v "${override}"
+      return 0
+    fi
+    echo "specified --go-bin/GO_BIN not executable: ${override}" >&2
+    return 1
+  fi
+
+  if command -v go >/dev/null 2>&1; then
+    command -v go
+    return 0
+  fi
+
+  local candidates=(
+    "/usr/local/go/bin/go"
+    "/usr/lib/go/bin/go"
+    "/snap/bin/go"
+  )
+
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    local sudo_home=""
+    if command -v getent >/dev/null 2>&1; then
+      sudo_home="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6 || true)"
+    fi
+    if [[ -z "${sudo_home}" ]]; then
+      if [[ -d "/home/${SUDO_USER}" ]]; then
+        sudo_home="/home/${SUDO_USER}"
+      elif [[ -d "/Users/${SUDO_USER}" ]]; then
+        sudo_home="/Users/${SUDO_USER}"
+      fi
+    fi
+    if [[ -n "${sudo_home}" ]]; then
+      candidates+=(
+        "${sudo_home}/.local/go/bin/go"
+        "${sudo_home}/go/bin/go"
+      )
+    fi
+  fi
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "${candidate}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if ! GO_BIN="$(resolve_go_bin)"; then
+  echo "required command not found: go" >&2
+  echo "hint: when running with sudo, PATH may not include your user Go installation." >&2
+  echo "try one of these:" >&2
+  echo "  1) sudo env \"PATH=\$PATH\" ./scripts/build-sbin-init-from-go.sh ..." >&2
+  echo "  2) sudo GO_BIN=\"/absolute/path/to/go\" ./scripts/build-sbin-init-from-go.sh ..." >&2
+  echo "  3) sudo ./scripts/build-sbin-init-from-go.sh --go-bin /absolute/path/to/go ..." >&2
+  exit 1
 fi
 
 mkdir -p "${OUTPUT_DIR}"
