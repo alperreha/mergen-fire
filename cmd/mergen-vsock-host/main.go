@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +35,8 @@ func main() {
 		nonInteractive string
 		retryTimeout   time.Duration
 		retryInterval  time.Duration
+		commandTimeout time.Duration
+		debug          bool
 	)
 
 	flag.StringVar(&vmID, "vm-id", "", "VM id (used with -config-root to resolve vm.json)")
@@ -43,16 +47,25 @@ func main() {
 	flag.StringVar(&nonInteractive, "command", "", "Optional one-shot command to run and exit")
 	flag.DurationVar(&retryTimeout, "retry-timeout", 15*time.Second, "VSock dial retry timeout")
 	flag.DurationVar(&retryInterval, "retry-interval", 100*time.Millisecond, "VSock dial retry interval")
+	flag.DurationVar(&commandTimeout, "command-timeout", 30*time.Second, "One-shot command timeout")
+	flag.BoolVar(&debug, "debug", false, "Enable debug logs")
 	flag.Parse()
+	if !debug {
+		debug = boolFromEnv(vsockcfg.DebugEnvVar)
+	}
+
+	debugf(debug, "start vmID=%q vmJSON=%q configRoot=%q udsPath=%q commandMode=%t", vmID, vmJSONPath, configRoot, udsPath, strings.TrimSpace(nonInteractive) != "")
 
 	resolvedUDS, err := resolveUDSPath(udsPath, vmJSONPath, vmID, configRoot)
 	if err != nil {
 		die("resolve uds path: %v", err)
 	}
+	debugf(debug, "resolved vsock uds path: %s", resolvedUDS)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	debugf(debug, "dialing vsock channel=%d retryTimeout=%s retryInterval=%s", vsockcfg.ShellPort, retryTimeout, retryInterval)
 	conn, err := fvsock.DialContext(
 		ctx,
 		resolvedUDS,
@@ -64,20 +77,21 @@ func main() {
 		die("vsock dial failed: %v", err)
 	}
 	defer conn.Close()
+	debugf(debug, "vsock dial successful")
 
 	reader := bufio.NewReader(conn)
-	if err := performAuth(conn, reader, authToken); err != nil {
+	if err := performAuth(conn, reader, authToken, debug); err != nil {
 		die("auth failed: %v", err)
 	}
 
 	if strings.TrimSpace(nonInteractive) != "" {
-		if err := runOneShot(conn, reader, nonInteractive); err != nil {
+		if err := runOneShot(conn, reader, nonInteractive, commandTimeout, debug); err != nil {
 			die("command mode failed: %v", err)
 		}
 		return
 	}
 
-	if err := runInteractive(conn, reader); err != nil {
+	if err := runInteractive(conn, reader, debug); err != nil {
 		die("interactive mode failed: %v", err)
 	}
 }
@@ -116,15 +130,17 @@ func resolveUDSPath(explicit, vmJSONPath, vmID, configRoot string) (string, erro
 	return resolved, nil
 }
 
-func performAuth(conn io.Writer, reader *bufio.Reader, token string) error {
+func performAuth(conn io.Writer, reader *bufio.Reader, token string, debug bool) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		token = strings.TrimSpace(os.Getenv("MERGEN_VSOCK_AUTH_TOKEN"))
 	}
 	if token == "" {
+		debugf(debug, "auth disabled")
 		return nil
 	}
 
+	debugf(debug, "sending auth line")
 	if _, err := io.WriteString(conn, "AUTH "+token+"\n"); err != nil {
 		return fmt.Errorf("write auth line: %w", err)
 	}
@@ -137,10 +153,12 @@ func performAuth(conn io.Writer, reader *bufio.Reader, token string) error {
 	if ack != "OK" {
 		return fmt.Errorf("unexpected auth ack: %s", ack)
 	}
+	debugf(debug, "auth acknowledged")
 	return nil
 }
 
-func runInteractive(conn io.ReadWriteCloser, reader *bufio.Reader) error {
+func runInteractive(conn io.ReadWriteCloser, reader *bufio.Reader, debug bool) error {
+	debugf(debug, "entering interactive mode")
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
 		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
@@ -150,25 +168,77 @@ func runInteractive(conn io.ReadWriteCloser, reader *bufio.Reader) error {
 
 	_, err := io.Copy(os.Stdout, io.MultiReader(reader, conn))
 	_ = conn.Close()
+	debugf(debug, "interactive session ended err=%v", err)
 	return err
 }
 
-func runOneShot(conn io.ReadWriteCloser, reader *bufio.Reader, command string) error {
+func runOneShot(conn io.ReadWriteCloser, reader *bufio.Reader, command string, timeout time.Duration, debug bool) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return nil
 	}
-	if _, err := io.WriteString(conn, command+"\nexit\n"); err != nil {
-		return fmt.Errorf("write command: %w", err)
+
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if deadlineConn, ok := conn.(interface{ SetReadDeadline(time.Time) error }); ok {
+		_ = deadlineConn.SetReadDeadline(time.Now().Add(timeout))
+		defer deadlineConn.SetReadDeadline(time.Time{})
+	}
+
+	debugf(debug, "sending one-shot command frame timeout=%s command=%q", timeout, command)
+	frame := vsockcfg.ExecBeginMarker + "\n" + command + "\n" + vsockcfg.ExecEndMarker + "\n"
+	if _, err := io.WriteString(conn, frame); err != nil {
+		return fmt.Errorf("write one-shot frame: %w", err)
 	}
 	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
 		_ = cw.CloseWrite()
 	}
-	_, err := io.Copy(os.Stdout, io.MultiReader(reader, conn))
-	return err
+
+	exitCode := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("read command output: %w", err)
+		}
+		trimmed := strings.TrimRight(line, "\r\n")
+		if strings.HasPrefix(trimmed, vsockcfg.ExecDonePrefix) {
+			codeRaw := strings.TrimSpace(strings.TrimPrefix(trimmed, vsockcfg.ExecDonePrefix))
+			parsed, parseErr := strconv.Atoi(codeRaw)
+			if parseErr != nil {
+				return fmt.Errorf("invalid done marker %q: %w", trimmed, parseErr)
+			}
+			exitCode = parsed
+			break
+		}
+		_, _ = fmt.Fprint(os.Stdout, line)
+	}
+
+	debugf(debug, "one-shot command completed exitCode=%d", exitCode)
+	if exitCode != 0 {
+		return fmt.Errorf("remote command exited with code %d", exitCode)
+	}
+	return nil
 }
 
 func die(format string, args ...any) {
 	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+func debugf(enabled bool, format string, args ...any) {
+	if !enabled {
+		return
+	}
+	log.Printf("[mergen-vsock-host] "+format, args...)
+}
+
+func boolFromEnv(key string) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

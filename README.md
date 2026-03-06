@@ -589,6 +589,24 @@ One-shot command mode:
 ./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id> -command 'uname -a'
 ```
 
+The host now sends a framed one-shot command (`__MERGEN_EXEC_BEGIN__/__MERGEN_EXEC_END__`) and waits for completion marker (`__MERGEN_EXEC_DONE__:<code>`), so command mode does not depend on interactive shell exit behavior.
+
+Useful debug flags:
+
+```bash
+./artifacts/sbin-init/mergen-vsock-host \
+  -vm-id <vm-id> \
+  -command 'echo hello' \
+  -debug \
+  -command-timeout 30s
+```
+
+Enable guest-side debug logs with environment variable:
+
+```bash
+export MERGEN_VSOCK_DEBUG=1
+```
+
 If auth token is configured in guest runtime metadata, provide it with:
 
 ```bash
