@@ -1,11 +1,14 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	fcclient "github.com/firecracker-microvm/firecracker-go-sdk/client"
@@ -54,7 +57,10 @@ func (s *SDKConfigurator) ConfigureAndStart(ctx context.Context, socketPath stri
 		return fmt.Errorf("boot-source: %w", err)
 	}
 	if opts.EnableEntropyDevice {
-		s.logger.Debug("entropy device setup skipped because sdk version has no entropy endpoint support", "socketPath", socketPath)
+		if err := putEntropyDevice(ctx, socketPath); err != nil {
+			return fmt.Errorf("entropy-device: %w", err)
+		}
+		s.logger.Debug("entropy device configured", "socketPath", socketPath)
 	}
 	for _, drive := range cfg.Drives {
 		driveName := "<nil>"
@@ -157,6 +163,41 @@ func startInstance(ctx context.Context, client fcops.ClientIface) error {
 	params.SetInfo(&action)
 	_, err := client.CreateSyncAction(params)
 	return err
+}
+
+func putEntropyDevice(ctx context.Context, socketPath string) error {
+	requestBody := bytes.NewBufferString("{}")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/entropy", requestBody)
+	if err != nil {
+		return fmt.Errorf("build entropy request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var dialer net.Dialer
+				return dialer.DialContext(ctx, "unix", socketPath)
+			},
+		},
+	}
+
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("send entropy request: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusNoContent {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		body := strings.TrimSpace(string(bodyBytes))
+		if body == "" {
+			return fmt.Errorf("unexpected status code %d", response.StatusCode)
+		}
+		return fmt.Errorf("unexpected status code %d: %s", response.StatusCode, body)
+	}
+
+	return nil
 }
 
 func stringPtr(value string) *string {

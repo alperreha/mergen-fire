@@ -119,6 +119,13 @@ func main() {
 		logger.Error("mount payload failed", "device", spec.PayloadDevice, "mount", spec.PayloadMountPoint, "error", err)
 		os.Exit(1)
 	}
+	cleanupPayloadMounts, err := preparePayloadRuntimeMounts(spec, logger)
+	if err != nil {
+		logger.Error("prepare payload runtime mounts failed", "mount", spec.PayloadMountPoint, "error", err)
+		os.Exit(1)
+	}
+	defer cleanupPayloadMounts()
+
 	env, err := buildRuntimeEnv(spec)
 	if err != nil {
 		logger.Error("build runtime env failed", "error", err)
@@ -268,6 +275,24 @@ func mountEnvDisk(spec runtimeSpec) error {
 		return err
 	}
 	return mountDisk(spec.EnvDevice, spec.EnvMountPoint, spec.EnvFSType, spec.EnvReadOnly)
+}
+
+func preparePayloadRuntimeMounts(spec runtimeSpec, logger *slog.Logger) (func(), error) {
+	devTarget := filepath.Join(spec.PayloadMountPoint, "dev")
+	if err := os.MkdirAll(devTarget, 0o755); err != nil {
+		return nil, fmt.Errorf("prepare payload /dev: %w", err)
+	}
+
+	if err := unix.Mount("/dev", devTarget, "", uintptr(unix.MS_BIND|unix.MS_REC), ""); err != nil {
+		return nil, fmt.Errorf("bind mount /dev into payload: %w", err)
+	}
+	logger.Info("payload runtime /dev prepared", "source", "/dev", "target", devTarget)
+
+	return func() {
+		if err := unix.Unmount(devTarget, unix.MNT_DETACH); err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOENT) {
+			logger.Warn("payload runtime /dev unmount failed", "target", devTarget, "error", err)
+		}
+	}, nil
 }
 
 func mountDisk(device, mountPoint, fsType string, readOnly bool) error {
