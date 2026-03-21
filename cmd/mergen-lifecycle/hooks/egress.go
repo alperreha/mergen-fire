@@ -170,6 +170,50 @@ func ResolveHostUplink(override string) (string, error) {
 	}
 	defer handle.Delete()
 
+	if name, err := resolveHostUplinkFromRouteGet(handle); err == nil && name != "" {
+		return name, nil
+	}
+	if name, err := resolveHostUplinkFromDefaultRoute(handle); err == nil && name != "" {
+		return name, nil
+	}
+	if name, err := resolveHostUplinkFromLinks(handle); err == nil && name != "" {
+		return name, nil
+	}
+
+	return "", errors.New("unable to resolve host uplink interface; set MGN_EGRESS_IFACE to override auto-detection")
+}
+
+func resolveHostUplinkFromRouteGet(handle *netlink.Handle) (string, error) {
+	probeIPs := []string{
+		strings.TrimSpace(EnvOrDefault("MGN_EGRESS_PROBE_IP", "1.1.1.1")),
+		"8.8.8.8",
+		"208.67.222.222",
+	}
+
+	for _, candidate := range probeIPs {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		ip := net.ParseIP(candidate)
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+
+		routes, err := handle.RouteGet(ip)
+		if err != nil {
+			continue
+		}
+		for _, route := range routes {
+			if name, err := resolveLinkName(handle, route.LinkIndex); err == nil && isUsableUplinkName(name) {
+				return name, nil
+			}
+		}
+	}
+
+	return "", errors.New("route get returned no usable uplink")
+}
+
+func resolveHostUplinkFromDefaultRoute(handle *netlink.Handle) (string, error) {
 	routes, err := handle.RouteList(nil, syscall.AF_INET)
 	if err != nil {
 		return "", err
@@ -179,17 +223,83 @@ func ResolveHostUplink(override string) (string, error) {
 		if route.Dst != nil || route.LinkIndex == 0 {
 			continue
 		}
-		link, err := handle.LinkByIndex(route.LinkIndex)
+		name, err := resolveLinkName(handle, route.LinkIndex)
 		if err != nil {
 			continue
 		}
-		name := strings.TrimSpace(link.Attrs().Name)
-		if name != "" && name != "lo" {
+		if isUsableUplinkName(name) {
 			return name, nil
 		}
 	}
 
-	return "", errors.New("unable to resolve host uplink interface from default route")
+	return "", errors.New("default route returned no usable uplink")
+}
+
+func resolveHostUplinkFromLinks(handle *netlink.Handle) (string, error) {
+	links, err := handle.LinkList()
+	if err != nil {
+		return "", err
+	}
+
+	for _, link := range links {
+		attrs := link.Attrs()
+		if attrs == nil {
+			continue
+		}
+
+		name := strings.TrimSpace(attrs.Name)
+		if !isUsableUplinkName(name) {
+			continue
+		}
+		if attrs.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := handle.AddrList(link, syscall.AF_INET)
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if addr.IP == nil {
+				continue
+			}
+			if addr.IP.To4() == nil || !addr.IP.IsGlobalUnicast() || addr.IP.IsLinkLocalUnicast() {
+				continue
+			}
+			return name, nil
+		}
+	}
+
+	return "", errors.New("no active non-loopback ipv4 link found")
+}
+
+func resolveLinkName(handle *netlink.Handle, index int) (string, error) {
+	if index <= 0 {
+		return "", errors.New("link index is invalid")
+	}
+	link, err := handle.LinkByIndex(index)
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSpace(link.Attrs().Name)
+	if name == "" {
+		return "", errors.New("link name is empty")
+	}
+	return name, nil
+}
+
+func isUsableUplinkName(name string) bool {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" || name == "lo" {
+		return false
+	}
+
+	for _, prefix := range []string{"tap", "mgnh", "mgnn", "veth", "br-", "docker", "cni", "virbr", "flannel", "tailscale", "zt"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	return true
 }
 
 func ensureVethPair(ctx context.Context, netnsName string, cfg EgressConfig) error {

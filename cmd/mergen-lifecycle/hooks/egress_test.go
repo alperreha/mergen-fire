@@ -41,3 +41,24 @@ func TestBuildEgressConfigRejectsInvalidGuestIP(t *testing.T) {
 		t.Fatal("expected invalid guest ip to fail")
 	}
 }
+
+func TestResolveHostUplinkOverrideWins(t *testing.T) {
+	got, err := ResolveHostUplink("ens18")
+	if err != nil {
+		t.Fatalf("resolve host uplink with override: %v", err)
+	}
+	if got != "ens18" {
+		t.Fatalf("unexpected uplink override result: %s", got)
+	}
+}
+
+func TestIsUsableUplinkName(t *testing.T) {
+	if !isUsableUplinkName("ens3") {
+		t.Fatal("expected ens3 to be accepted as uplink")
+	}
+	for _, candidate := range []string{"lo", "tap-test", "mgnh1234", "mgnn1234", "vethabcd", "docker0", "cni0"} {
+		if isUsableUplinkName(candidate) {
+			t.Fatalf("expected %s to be rejected as uplink", candidate)
+		}
+	}
+}
