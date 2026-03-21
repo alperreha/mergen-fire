@@ -9,6 +9,15 @@ import (
 
 func HandleDeleteNetwork(ctx context.Context, req lifecyclehooks.Request) error {
 	netnsName := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_NETNS", lifecyclehooks.EnvOrDefault("FC_NETNS", "mergen-"+lifecyclehooks.ShortID(req.VMID))))
+	guestIP := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_GUEST_IP", lifecyclehooks.GuestIPFromVMConfig(req.VMConfig)))
+	egressUplink := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_EGRESS_IFACE", ""))
+
+	if guestIP != "" {
+		if err := lifecyclehooks.DeleteNetNSEgress(ctx, netnsName, req.VMID, guestIP, egressUplink); err != nil && req.Logger != nil {
+			req.Logger.Warn("network egress cleanup failed", "vmID", req.VMID, "netns", netnsName, "error", err)
+		}
+	}
+
 	exists, err := lifecyclehooks.NetNSExists(ctx, netnsName)
 	if err != nil {
 		return err

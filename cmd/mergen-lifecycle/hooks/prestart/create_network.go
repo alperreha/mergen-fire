@@ -34,6 +34,7 @@ func HandleCreateNetwork(ctx context.Context, req lifecyclehooks.Request) error 
 	guestIP := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_GUEST_IP", lifecyclehooks.GuestIPFromVMConfig(req.VMConfig)))
 	hostPrefix := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_HOST_PREFIX", defaultHostPrefix))
 	hostIP := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_HOST_IP", ""))
+	egressUplink := strings.TrimSpace(lifecyclehooks.EnvOrDefault("MGN_EGRESS_IFACE", ""))
 	if hostIP == "" {
 		hostIP = lifecyclehooks.DeriveHostIPFromGuestIP(guestIP)
 	}
@@ -110,8 +111,21 @@ func HandleCreateNetwork(ctx context.Context, req lifecyclehooks.Request) error 
 		return err
 	}
 
+	egressCfg, err := lifecyclehooks.EnsureNetNSEgress(ctx, netnsName, req.VMID, guestIP, egressUplink)
+	if err != nil {
+		return err
+	}
+
 	if req.Logger != nil {
-		req.Logger.Info("network setup completed", "vmID", req.VMID, "netns", netnsName, "tap", tapName)
+		req.Logger.Info(
+			"network setup completed",
+			"vmID", req.VMID,
+			"netns", netnsName,
+			"tap", tapName,
+			"egressRootVeth", egressCfg.RootVethName,
+			"egressNSVeth", egressCfg.NSVethName,
+			"egressUplink", egressCfg.Uplink,
+		)
 	}
 	return nil
 }
