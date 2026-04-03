@@ -8,4 +8,6 @@ require (
 	golang.org/x/sys v0.37.0
 )
 
+require github.com/vishvananda/netns v0.0.5 // indirect
+
 replace github.com/alperreha/mergen-fire => ../
