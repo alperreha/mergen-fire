@@ -69,7 +69,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - **Control plane:** Go HTTP API server (`cmd/mergend`)
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
-- **Image conversion plane:** Registry-image-to-rootfs converter (`cmd/mergen-converter`)
+- **Image conversion plane:** Registry-image-to-rootfs converter (`converter/cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
 - **Emergency access plane:** Firecracker VSock host<->guest terminal bridge
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
@@ -80,14 +80,15 @@ Forwarder design details: `docs/forwarder-design.md`
 
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
-- `cmd/mergen-converter`: registry image conversion CLI
-- `cmd/mergen-init`: in-guest init/PID1 runtime
-- `cmd/mergen-vsock-guest`: in-guest VSock listener that spawns shell
 - `cmd/mergen-vsock-host`: host-side VSock connector
+- `converter/cmd/mergen-converter`: registry image conversion CLI
+- `converter/internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
+- `runtime/cmd/mergen-init`: in-guest init/PID1 runtime
+- `runtime/cmd/mergen-agent`: payload launcher inside guest
+- `runtime/cmd/mergen-vsock-guest`: in-guest VSock listener that spawns shell
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
-- `internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
 - `internal/store`: filesystem persistence
 - `internal/systemd`: `systemctl` wrapper
 - `internal/firecracker`: VM config rendering and socket probe
@@ -97,7 +98,8 @@ Forwarder design details: `docs/forwarder-design.md`
 - `deploy/systemd/mergen-forwarder.service`: forwarder systemd unit
 - `cmd/mergen-lifecycle`: lifecycle binary used by systemd hooks
 - `scripts/gen-wildcard-cert.sh`: self-signed wildcard TLS cert generator
-- `scripts/build-golden-rootfs.sh`: Buildroot + BusyBox based golden rootfs (disk0) builder
+- `runtime/scripts/build-golden-rootfs.sh`: Buildroot + BusyBox based golden rootfs (disk0) builder
+- `go.work`: multi-module workspace binding root, `converter`, and `runtime`
 
 ## Requirements
 
@@ -252,7 +254,7 @@ Host-side binaries are separate and should be installed to `/usr/local/bin` (exa
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergend ./cmd/mergend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-lifecycle ./cmd/mergen-lifecycle
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-forwarder ./cmd/mergen-forwarder
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-converter ./cmd/mergen-converter
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-converter ./converter/cmd/mergen-converter
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-vsock-host ./cmd/mergen-vsock-host
 
 sudo install -m 0755 /tmp/mergend /usr/local/bin/mergend
@@ -293,7 +295,7 @@ Run converter (default mode is payload-only):
 ```bash
 export IMAGE="nginx:alpine"
 
-go run ./cmd/mergen-converter \
+go run ./converter/cmd/mergen-converter \
   convert \
   -image "$IMAGE" \
   -vsock-enable
@@ -302,7 +304,7 @@ go run ./cmd/mergen-converter \
 Generate or refresh `agent-rootfs.ext4` directly from base binaries (`/var/lib/mergen/base/<version>/bin`):
 
 ```bash
-go run ./cmd/mergen-converter \
+go run ./converter/cmd/mergen-converter \
   convert \
   --agent-rootfs \
   --base-assets-dir /var/lib/mergen/base/current
@@ -311,7 +313,7 @@ go run ./cmd/mergen-converter \
 Optional output path and size:
 
 ```bash
-go run ./cmd/mergen-converter \
+go run ./converter/cmd/mergen-converter \
   convert \
   --agent-rootfs \
   --base-assets-dir /var/lib/mergen/base/current \
@@ -326,7 +328,7 @@ Generate `env-rootfs.ext4` from runtime metadata (`mergen.runtime.json`) and opt
 ```bash
 export IMAGE="nginx:alpine"
 
-go run ./cmd/mergen-converter \
+go run ./converter/cmd/mergen-converter \
   convert \
   --env-rootfs \
   --runtime-json "/var/lib/mergen/images/${IMAGE}/mergen.runtime.json" \
@@ -343,7 +345,7 @@ Default behavior creates only payload artifacts (`payload-rootfs/`, `payload-roo
 If you really need old behavior (golden/agent/env bundle per image), use `-legacy-full-bundle`.
 Legacy bundle mode can still use `-golden-rootfs-dir` and `-sbin-init`/`-sbin-agent`.
 Use `-vsock-enable` to include VSock runtime metadata in generated runtime JSON.
-Injected `/sbin/init` is expected to be built from `cmd/mergen-init`.
+Injected `/sbin/init` is expected to be built from `runtime/cmd/mergen-init`.
 Default path is under `/var/lib/mergen/images`, so run with sufficient permissions (or override with `-output-dir`).
 Default output path follows image reference hierarchy under `/var/lib/mergen/images`:
 
@@ -367,7 +369,7 @@ Delete a converted image rootfs bundle:
 ```bash
 export IMAGE="nginx:alpine"
 
-go run ./cmd/mergen-converter \
+go run ./converter/cmd/mergen-converter \
   convert \
   -image "$IMAGE" \
   -delete-rootfs
@@ -378,13 +380,13 @@ Use `-output-dir` if you want to delete a non-default conversion location.
 Run converter doctor checks:
 
 ```bash
-go run ./cmd/mergen-converter doctor
+go run ./converter/cmd/mergen-converter doctor
 ```
 
 Example JSON output:
 
 ```bash
-go run ./cmd/mergen-converter doctor --json
+go run ./converter/cmd/mergen-converter doctor --json
 ```
 
 `doctor` validates base assets under `/var/lib/mergen/base/current` by default:

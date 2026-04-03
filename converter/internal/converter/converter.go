@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alperreha/mergen-fire/pkg/guestspec"
 	digest "github.com/opencontainers/go-digest"
 	dockertransport "go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/pkg/blobinfocache/none"
@@ -1256,48 +1257,9 @@ func composeStartCommand(entrypoint, cmd []string) []string {
 	return joined
 }
 
-type metadata struct {
-	Image             string    `json:"image"`
-	CreatedAt         time.Time `json:"createdAt"`
-	Entrypoint        []string  `json:"entrypoint"`
-	Cmd               []string  `json:"cmd"`
-	StartCmd          []string  `json:"startCmd"`
-	Env               []string  `json:"env"`
-	WorkingDir        string    `json:"workingDir"`
-	User              string    `json:"user"`
-	ExposedPorts      []string  `json:"exposedPorts"`
-	SuggestedHTTPPort int       `json:"suggestedHTTPPort,omitempty"`
-}
+type metadata = guestspec.ImageMeta
 
-type runtimeMetadata struct {
-	Image             string   `json:"image"`
-	BootArgs          string   `json:"bootArgs"`
-	HTTPPort          int      `json:"httpPort,omitempty"`
-	Entrypoint        []string `json:"entrypoint,omitempty"`
-	Cmd               []string `json:"cmd,omitempty"`
-	StartCmd          []string `json:"startCmd,omitempty"`
-	Env               []string `json:"env,omitempty"`
-	WorkingDir        string   `json:"workingDir,omitempty"`
-	User              string   `json:"user,omitempty"`
-	AgentDevice       string   `json:"agentDevice"`
-	AgentFSType       string   `json:"agentFSType"`
-	AgentMountPoint   string   `json:"agentMountPoint"`
-	AgentReadOnly     bool     `json:"agentReadOnly"`
-	AgentPath         string   `json:"agentPath"`
-	PayloadDevice     string   `json:"payloadDevice"`
-	PayloadFSType     string   `json:"payloadFSType"`
-	PayloadMountPoint string   `json:"payloadMountPoint"`
-	PayloadReadOnly   bool     `json:"payloadReadOnly"`
-	EnvDevice         string   `json:"envDevice"`
-	EnvFSType         string   `json:"envFSType"`
-	EnvMountPoint     string   `json:"envMountPoint"`
-	EnvReadOnly       bool     `json:"envReadOnly"`
-	EnvFile           string   `json:"envFile"`
-	VSockEnabled      bool     `json:"vsockEnabled,omitempty"`
-	VSockGuestPath    string   `json:"vsockGuestPath,omitempty"`
-	VSockShell        string   `json:"vsockShell,omitempty"`
-	VSockAuthToken    string   `json:"vsockAuthToken,omitempty"`
-}
+type runtimeMetadata = guestspec.Runtime
 
 func writeMetadataFiles(rootfsDir, outputDir string, meta metadata) error {
 	body, err := json.MarshalIndent(meta, "", "  ")

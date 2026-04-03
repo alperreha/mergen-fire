@@ -15,11 +15,11 @@ import (
 	"github.com/alperreha/mergen-fire/internal/api"
 	"github.com/alperreha/mergen-fire/internal/config"
 	"github.com/alperreha/mergen-fire/internal/hooks"
-	"github.com/alperreha/mergen-fire/internal/logging"
 	"github.com/alperreha/mergen-fire/internal/manager"
 	"github.com/alperreha/mergen-fire/internal/network"
 	"github.com/alperreha/mergen-fire/internal/store"
 	"github.com/alperreha/mergen-fire/internal/systemd"
+	"github.com/alperreha/mergen-fire/pkg/logging"
 )
 
 func main() {

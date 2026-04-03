@@ -22,7 +22,7 @@ import (
 
 	fvsock "github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 
-	"github.com/alperreha/mergen-fire/internal/vsockcfg"
+	"github.com/alperreha/mergen-fire/pkg/vsockcfg"
 )
 
 func main() {

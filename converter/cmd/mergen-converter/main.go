@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alperreha/mergen-fire/internal/converter"
-	"github.com/alperreha/mergen-fire/internal/logging"
+	"github.com/alperreha/mergen-fire/converter/internal/converter"
+	"github.com/alperreha/mergen-fire/pkg/logging"
 )
 
 func main() {

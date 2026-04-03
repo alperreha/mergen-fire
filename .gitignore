@@ -5,3 +5,6 @@ artifacts/converter/
 artifacts/sbin-init/sbin-init
 artifacts/sbin-init/build-info.txt
 artifacts/kernels/
+
+# .DS_Store
+*/**/.DS_Store

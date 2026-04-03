@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,7 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alperreha/mergen-fire/internal/vsockcfg"
+	"github.com/alperreha/mergen-fire/pkg/guestspec"
+	"github.com/alperreha/mergen-fire/pkg/vsockcfg"
 	"golang.org/x/sys/unix"
 )
 
@@ -40,41 +40,8 @@ const (
 	defaultTelemetryIntervalSeconds = 10
 )
 
-type runtimeSpec struct {
-	Image             string   `json:"image"`
-	BootArgs          string   `json:"bootArgs,omitempty"`
-	HTTPPort          int      `json:"httpPort,omitempty"`
-	Entrypoint        []string `json:"entrypoint,omitempty"`
-	Cmd               []string `json:"cmd,omitempty"`
-	StartCmd          []string `json:"startCmd,omitempty"`
-	Env               []string `json:"env,omitempty"`
-	WorkingDir        string   `json:"workingDir,omitempty"`
-	User              string   `json:"user,omitempty"`
-	PayloadDevice     string   `json:"payloadDevice,omitempty"`
-	PayloadFSType     string   `json:"payloadFSType,omitempty"`
-	PayloadMountPoint string   `json:"payloadMountPoint,omitempty"`
-	PayloadReadOnly   bool     `json:"payloadReadOnly,omitempty"`
-	EnvDevice         string   `json:"envDevice,omitempty"`
-	EnvFSType         string   `json:"envFSType,omitempty"`
-	EnvMountPoint     string   `json:"envMountPoint,omitempty"`
-	EnvReadOnly       bool     `json:"envReadOnly,omitempty"`
-	EnvFile           string   `json:"envFile,omitempty"`
-	VSockEnabled      bool     `json:"vsockEnabled,omitempty"`
-	VSockGuestPath    string   `json:"vsockGuestPath,omitempty"`
-	VSockShell        string   `json:"vsockShell,omitempty"`
-	VSockAuthToken    string   `json:"vsockAuthToken,omitempty"`
-	VSockDebug        bool     `json:"vsockDebug,omitempty"`
-}
-
-type imageMetaSpec struct {
-	Image      string   `json:"image"`
-	Entrypoint []string `json:"entrypoint,omitempty"`
-	Cmd        []string `json:"cmd,omitempty"`
-	StartCmd   []string `json:"startCmd,omitempty"`
-	Env        []string `json:"env,omitempty"`
-	WorkingDir string   `json:"workingDir,omitempty"`
-	User       string   `json:"user,omitempty"`
-}
+type runtimeSpec = guestspec.Runtime
+type imageMetaSpec = guestspec.ImageMeta
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -176,14 +143,9 @@ func defaultRuntimeSpec() runtimeSpec {
 }
 
 func loadRuntimeSpec(path string) (runtimeSpec, error) {
-	body, err := os.ReadFile(path)
+	spec, err := guestspec.ReadRuntime(path)
 	if err != nil {
-		return runtimeSpec{}, fmt.Errorf("read runtime file: %w", err)
-	}
-
-	var spec runtimeSpec
-	if err := json.Unmarshal(body, &spec); err != nil {
-		return runtimeSpec{}, fmt.Errorf("decode runtime file: %w", err)
+		return runtimeSpec{}, err
 	}
 
 	spec.PayloadDevice = defaultIfEmpty(spec.PayloadDevice, defaultPayloadDevice)
@@ -233,14 +195,9 @@ func resolveRuntimeSpec(runtimePath string, bootstrap runtimeSpec, logger *slog.
 }
 
 func loadRuntimeSpecFromImageMeta(path string, bootstrap runtimeSpec) (runtimeSpec, error) {
-	body, err := os.ReadFile(path)
+	meta, err := guestspec.ReadImageMeta(path)
 	if err != nil {
-		return runtimeSpec{}, fmt.Errorf("read image metadata %s: %w", path, err)
-	}
-
-	var meta imageMetaSpec
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return runtimeSpec{}, fmt.Errorf("decode image metadata %s: %w", path, err)
+		return runtimeSpec{}, err
 	}
 
 	spec := bootstrap

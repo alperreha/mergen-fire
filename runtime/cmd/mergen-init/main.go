@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alperreha/mergen-fire/pkg/guestspec"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -175,15 +176,7 @@ func newLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }
 
-type imageMeta struct {
-	Image      string   `json:"image"`
-	Entrypoint []string `json:"entrypoint"`
-	Cmd        []string `json:"cmd"`
-	StartCmd   []string `json:"startCmd"`
-	Env        []string `json:"env"`
-	WorkingDir string   `json:"workingDir"`
-	User       string   `json:"user"`
-}
+type imageMeta = guestspec.ImageMeta
 
 type flyRunConfig struct {
 	ImageConfig  *flyImageConfig   `json:"ImageConfig"`
@@ -264,15 +257,7 @@ func loadStartSpec() (startSpec, string, error) {
 }
 
 func loadImageMeta(path string) (imageMeta, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return imageMeta{}, err
-	}
-	var meta imageMeta
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return imageMeta{}, err
-	}
-	return meta, nil
+	return guestspec.ReadImageMeta(path)
 }
 
 func loadFlyRunConfig(path string) (flyRunConfig, error) {

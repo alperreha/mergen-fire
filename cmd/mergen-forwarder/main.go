@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 	"github.com/alperreha/mergen-fire/internal/forwarder"
-	"github.com/alperreha/mergen-fire/internal/logging"
+	"github.com/alperreha/mergen-fire/pkg/logging"
 )
 
 func main() {
