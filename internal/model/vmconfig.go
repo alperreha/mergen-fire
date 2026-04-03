@@ -16,7 +16,6 @@ type BootSource = fcmodels.BootSource
 type Drive = fcmodels.Drive
 type MachineConfig = fcmodels.MachineConfiguration
 type NetworkInterface = fcmodels.NetworkInterface
-type Vsock = fcmodels.Vsock
 
 func StringPtr(value string) *string {
 	return &value
@@ -104,15 +103,6 @@ func ValidateVMConfig(cfg VMConfig) error {
 		hostDevName := strings.TrimSpace(StringValue(nic.HostDevName))
 		if hostDevName == "" {
 			return fmt.Errorf("network interface %s host_dev_name is empty", ifaceID)
-		}
-	}
-
-	if cfg.Vsock != nil {
-		if Int64Value(cfg.Vsock.GuestCid) < 3 {
-			return errors.New("vsock.guest_cid must be greater than or equal to 3")
-		}
-		if strings.TrimSpace(StringValue(cfg.Vsock.UdsPath)) == "" {
-			return errors.New("vsock.uds_path is empty")
 		}
 	}
 

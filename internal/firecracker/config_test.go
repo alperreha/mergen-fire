@@ -122,36 +122,3 @@ func TestRenderVMConfig_WithAgentPayloadAndEnvDisks(t *testing.T) {
 		t.Fatalf("unexpected env drive: %#v", cfg.Drives[3])
 	}
 }
-
-func TestRenderVMConfig_WithVsock(t *testing.T) {
-	req := model.CreateVMRequest{
-		RootFS:        "/var/lib/mergen/golden-rootfs.ext4",
-		Kernel:        "/var/lib/mergen/vmlinux",
-		VSockEnabled:  true,
-		VSockGuestCID: 42,
-		VCPU:          1,
-		MemMiB:        512,
-	}
-	meta := model.VMMetadata{
-		ID:      "6f008233-68f7-47b8-b2d1-6a9f0632b30b",
-		TapName: "tap-6f008233",
-		GuestIP: "172.30.0.2",
-		Paths: model.VMPaths{
-			RunDir: "/run/mergen/6f008233-68f7-47b8-b2d1-6a9f0632b30b",
-		},
-	}
-
-	cfg := RenderVMConfig(req, meta)
-	if cfg.Vsock == nil {
-		t.Fatalf("expected vsock config")
-	}
-	if got := model.Int64Value(cfg.Vsock.GuestCid); got != 42 {
-		t.Fatalf("unexpected guest cid: %d", got)
-	}
-	if got := model.StringValue(cfg.Vsock.UdsPath); got != "/run/mergen/6f008233-68f7-47b8-b2d1-6a9f0632b30b/mergen.vsock" {
-		t.Fatalf("unexpected uds path: %s", got)
-	}
-	if got := cfg.Vsock.VsockID; got != "mergen" {
-		t.Fatalf("unexpected vsock id: %s", got)
-	}
-}

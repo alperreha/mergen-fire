@@ -12,8 +12,6 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
 - `mergen-init`: Go PID1 init binary for converted rootfs
-- `mergen-vsock-guest`: in-guest VSock shell listener
-- `mergen-vsock-host`: host-side VSock terminal client
 
 ## Table of Contents
 
@@ -27,7 +25,6 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - [Configuration](#configuration)
 - [Forwarder Configuration](#forwarder-configuration)
 - [Systemd Template and Mergen Lifecycle](#systemd-template-and-mergen-lifecycle)
-- [VSock Emergency Shell](#vsock-emergency-shell)
 - [Testing](#testing)
 
 ## Why this project
@@ -71,7 +68,6 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
 - **Image conversion plane:** Registry-image-to-rootfs converter (`converter/cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
-- **Emergency access plane:** Firecracker VSock host<->guest terminal bridge
 - **State source:** filesystem under `MGR_CONFIG_ROOT`, `MGR_RUN_ROOT`, `MGR_DATA_ROOT`
 
 Forwarder design details: `docs/forwarder-design.md`
@@ -80,12 +76,10 @@ Forwarder design details: `docs/forwarder-design.md`
 
 - `cmd/mergend`: manager daemon API entrypoint
 - `cmd/mergen-forwarder`: TLS SNI forwarder
-- `cmd/mergen-vsock-host`: host-side VSock connector
 - `converter/cmd/mergen-converter`: registry image conversion CLI
 - `converter/internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
 - `runtime/cmd/mergen-init`: in-guest init/PID1 runtime
 - `runtime/cmd/mergen-agent`: payload launcher inside guest
-- `runtime/cmd/mergen-vsock-guest`: in-guest VSock listener that spawns shell
 - `internal/api`: REST handlers
 - `internal/manager`: orchestration/service layer
 - `internal/forwarder`: SNI resolver + TLS proxy + netns dialer
@@ -225,7 +219,6 @@ This installs binaries under `${BASE_DIR}/${BASE_VERSION}/bin/`:
 
 - `sbin-init`
 - `mergen-agent`
-- `mergen-vsock-guest`
 - optional: `mergen-supervisor`, `mergen-telemetry` (built only if corresponding `cmd/...` has Go files)
 
 And updates `${BASE_DIR}/current -> ${BASE_VERSION}` symlink (unless `--no-current-link` is used).
@@ -255,13 +248,11 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergend ./cmd/mergend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-lifecycle ./cmd/mergen-lifecycle
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-forwarder ./cmd/mergen-forwarder
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-converter ./converter/cmd/mergen-converter
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-vsock-host ./cmd/mergen-vsock-host
 
 sudo install -m 0755 /tmp/mergend /usr/local/bin/mergend
 sudo install -m 0755 /tmp/mergen-lifecycle /usr/local/bin/mergen-lifecycle
 sudo install -m 0755 /tmp/mergen-forwarder /usr/local/bin/mergen-forwarder
 sudo install -m 0755 /tmp/mergen-converter /usr/local/bin/mergen-converter
-sudo install -m 0755 /tmp/mergen-vsock-host /usr/local/bin/mergen-vsock-host
 ```
 
 Optional: build a reusable BusyBox-based golden rootfs (disk0) with Buildroot:
@@ -297,8 +288,7 @@ export IMAGE="nginx:alpine"
 
 go run ./converter/cmd/mergen-converter \
   convert \
-  -image "$IMAGE" \
-  -vsock-enable
+  -image "$IMAGE"
 ```
 
 Generate or refresh `agent-rootfs.ext4` directly from base binaries (`/var/lib/mergen/base/<version>/bin`):
@@ -344,7 +334,6 @@ Use `-skip-pull` to reuse `output-dir/image-cache` from a previous conversion ru
 Default behavior creates only payload artifacts (`payload-rootfs/`, `payload-rootfs.ext4`, metadata files).  
 If you really need old behavior (golden/agent/env bundle per image), use `-legacy-full-bundle`.
 Legacy bundle mode can still use `-golden-rootfs-dir` and `-sbin-init`/`-sbin-agent`.
-Use `-vsock-enable` to include VSock runtime metadata in generated runtime JSON.
 Injected `/sbin/init` is expected to be built from `runtime/cmd/mergen-init`.
 Default path is under `/var/lib/mergen/images`, so run with sufficient permissions (or override with `-output-dir`).
 Default output path follows image reference hierarchy under `/var/lib/mergen/images`:
@@ -397,7 +386,7 @@ go run ./converter/cmd/mergen-converter doctor --json
 - `bin/sbin-init`
 - `bin/mergen-agent`
 - `base/current` symlink integrity (`current -> <version>`) when `--base-dir` ends with `current`
-- optional: `env-rootfs.ext4`, `bin/mergen-vsock-guest`, `bin/mergen-supervisor`, `bin/mergen-telemetry`, `mergen-vsock-host` in `PATH`
+- optional: `env-rootfs.ext4`, `bin/mergen-supervisor`, `bin/mergen-telemetry`
 
 `doctor` does not check payload rootfs because payload is image-specific and provided at VM create time.
 
@@ -427,8 +416,6 @@ export VM_JSON="$(curl -s -X POST http://127.0.0.1:8080/v1/vms \
     "kernel": "/var/lib/mergen/base/current/vmlinux",
     "vcpu": 1,
     "memMiB": 512,
-    "vsockEnabled": true,
-    "vsockGuestCID": 3,
     "ports": [{"guest": $PORT, "host": 0}],
     "httpPort": $PORT,
     "tags": {"app": "$SUBDOMAIN"},
@@ -551,119 +538,21 @@ This SNI rule applies to HTTPS listener routing.
   - Systemd stages: `pre-start`, `start`, `post-start`, `stop`, `post-stop`, `on-failure`
   - Extra toolkit commands: `status`, `restart`, `pre-delete`, `delete`, `post-delete`
 
-`mergen-lifecycle post-start` runs the Firecracker API flow (socket + config + InstanceStart) through `github.com/firecracker-microvm/firecracker-go-sdk`. `mergen-lifecycle stop` sends `SendCtrlAltDel` via SDK as best-effort stop signal. `mergen-lifecycle status` reads instance info from the Firecracker API socket, and `mergen-lifecycle restart` sends the same guest restart action. `MGN_ENABLE_ENTROPY_DEVICE=1` enables pre-boot entropy device setup (`PUT /entropy`) before drives/network/vsock are attached. Stage extensions run sequentially and wait for each hook to complete before the next hook starts. Lifecycle stage events are append-only written to `MGN_DAEMON_LOG_FILE` (default `/var/lib/mergen/daemon.log`).
+`mergen-lifecycle post-start` runs the Firecracker API flow (socket + config + InstanceStart) through `github.com/firecracker-microvm/firecracker-go-sdk`. `mergen-lifecycle stop` sends `SendCtrlAltDel` via SDK as best-effort stop signal. `mergen-lifecycle status` reads instance info from the Firecracker API socket, and `mergen-lifecycle restart` sends the same guest restart action. `MGN_ENABLE_ENTROPY_DEVICE=1` enables pre-boot entropy device setup (`PUT /entropy`) before drives/network are attached. Stage extensions run sequentially and wait for each hook to complete before the next hook starts. Lifecycle stage events are append-only written to `MGN_DAEMON_LOG_FILE` (default `/var/lib/mergen/daemon.log`).
 
 For per-VM extension hooks, create `lifecycle-hooks.json` under the VM config dir (`/var/lib/mergen/vm.d/<vm-id>/lifecycle-hooks.json`) with stage arrays (`preStart`, `postStart`, `preStop`, `postStop`, `preDelete`, `delete`, `postDelete`). You can also pass command hooks via env (`MGN_LIFECYCLE_PRE_START_HOOKS`, `MGN_LIFECYCLE_POST_STOP_HOOKS`, etc.), using `;` as separator. `{{vm_id}}` and `${VM_ID}` tokens are supported.
-
-## VSock Emergency Shell
-
-Firecracker terminal access for host -> guest shell can be added with native VSock support.
-
-- No extra disk is required by Firecracker for VSock itself.  
-  VSock is a VM device (`vm.json -> vsock`), not a block disk.
-- `mergen-vsock-guest` runs inside guest and listens on fixed VSock channel `7000`.
-- `mergen-vsock-host` runs on host and connects to Firecracker VSock UDS path.
-
-### 1. Create VM with VSock enabled
-
-Add these fields to `POST /v1/vms` payload:
-
-```json
-{
-  "vsockEnabled": true,
-  "vsockGuestCID": 3
-}
-```
-
-Optional:
-
-- `vsockUDSPath`: custom host-side UDS path (default: `<runDir>/mergen.vsock`)
-- `vsockID`: custom device id (default: `mergen`)
-
-### 2. Start guest helper from converter/agent flow
-
-If you use converter with `-vsock-enable`, runtime metadata includes:
-
-- `vsockEnabled`
-- `vsockGuestPath`
-- `vsockAuthToken` (if provided)
-- `vsockDebug` (optional, enables guest-side connection logs)
-
-`mergen-agent` starts `mergen-vsock-guest` automatically when `vsockEnabled=true`.
-When `vsockDebug=true` (or `MERGEN_VSOCK_DEBUG=1`), guest logs include connection lifecycle lines such as:
-- `accepted connection id=...`
-- `command frame received ...`
-- `one-shot completed exitCode=...`
-
-### 3. Connect from host
-
-Build host binary:
-
-```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -o ./artifacts/sbin-init/mergen-vsock-host ./cmd/mergen-vsock-host
-```
-
-Connect using VM id (reads `vm.json` automatically):
-
-```bash
-./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id>
-```
-
-One-shot command mode:
-
-```bash
-./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id> -command 'uname -a'
-```
-
-The host now sends a framed one-shot command (`__MERGEN_EXEC_BEGIN__/__MERGEN_EXEC_END__`) and waits for completion marker (`__MERGEN_EXEC_DONE__:<code>`), so command mode does not depend on interactive shell exit behavior.
-
-Useful debug flags:
-
-```bash
-./artifacts/sbin-init/mergen-vsock-host \
-  -vm-id <vm-id> \
-  -command 'echo hello' \
-  -debug \
-  -command-timeout 30s
-```
-
-Enable guest-side debug logs with environment variable:
-
-```bash
-export MERGEN_VSOCK_DEBUG=1
-```
-
-Troubleshooting when host appears stuck on dial:
-
-- `udsPath=""` in host debug output is normal when `-uds-path` is not passed; it means host will resolve path from `vm.json`.
-- Verify Firecracker vsock device exists in VM config:
-  - `jq '.vsock' /var/lib/mergen/vm.d/<vm-id>/vm.json`
-- Verify guest runtime actually enables vsock listener:
-  - follow VM logs: `journalctl -fu mergen@<vm-id>.service`
-  - look for:
-    - `runtime spec resolved ... vsockEnabled=true`
-    - `vsock guest listener started`
-- If logs show `vsockEnabled=false`, guest listener is intentionally not started.
-  Most common reason: `mergen.runtime.json` is not mounted from env disk.
-- New host flag `-dial-timeout` prevents infinite wait and returns a clear timeout error.
-
-If auth token is configured in guest runtime metadata, provide it with:
-
-```bash
-./artifacts/sbin-init/mergen-vsock-host -vm-id <vm-id> -auth-token '<token>'
-```
 
 ## Testing
 
 ```bash
 go test ./...
+go test ./converter/...
+GOOS=linux GOARCH=amd64 go build ./runtime/...
 ```
 
 ## Roadmap
 
 - Real netns/tap/iptables implementation in lifecycle stage extensions
-- Graceful stop via vsock guest agent
 - Envoy/Consul integration via hooks
 - Stronger authn/authz for manager API
 

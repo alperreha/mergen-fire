@@ -44,11 +44,6 @@ type Runtime struct {
 	EnvMountPoint     string   `json:"envMountPoint,omitempty"`
 	EnvReadOnly       bool     `json:"envReadOnly,omitempty"`
 	EnvFile           string   `json:"envFile,omitempty"`
-	VSockEnabled      bool     `json:"vsockEnabled,omitempty"`
-	VSockGuestPath    string   `json:"vsockGuestPath,omitempty"`
-	VSockShell        string   `json:"vsockShell,omitempty"`
-	VSockAuthToken    string   `json:"vsockAuthToken,omitempty"`
-	VSockDebug        bool     `json:"vsockDebug,omitempty"`
 }
 
 func ReadImageMeta(path string) (ImageMeta, error) {

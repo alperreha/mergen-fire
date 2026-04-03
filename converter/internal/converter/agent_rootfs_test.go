@@ -12,7 +12,7 @@ func TestCopyAgentBinariesFromBaseCopiesExecutables(t *testing.T) {
 	destDir := t.TempDir()
 
 	mustWriteAgentFile(t, filepath.Join(baseBinDir, "mergen-agent"), []byte("agent"), 0o755)
-	mustWriteAgentFile(t, filepath.Join(baseBinDir, "mergen-vsock-guest"), []byte("vsock"), 0o755)
+	mustWriteAgentFile(t, filepath.Join(baseBinDir, "helper-tool"), []byte("tool"), 0o755)
 	mustWriteAgentFile(t, filepath.Join(baseBinDir, "README.txt"), []byte("not executable"), 0o644)
 
 	files, err := copyAgentBinariesFromBase(baseBinDir, destDir)
@@ -20,7 +20,7 @@ func TestCopyAgentBinariesFromBaseCopiesExecutables(t *testing.T) {
 		t.Fatalf("copyAgentBinariesFromBase failed: %v", err)
 	}
 
-	if !containsString(files, "mergen-agent") || !containsString(files, "mergen-vsock-guest") {
+	if !containsString(files, "mergen-agent") || !containsString(files, "helper-tool") {
 		t.Fatalf("unexpected copied files: %#v", files)
 	}
 	if _, err := os.Stat(filepath.Join(destDir, "README.txt")); !os.IsNotExist(err) {
@@ -32,7 +32,7 @@ func TestCopyAgentBinariesFromBaseFailsWithoutMergenAgent(t *testing.T) {
 	baseBinDir := t.TempDir()
 	destDir := t.TempDir()
 
-	mustWriteAgentFile(t, filepath.Join(baseBinDir, "mergen-vsock-guest"), []byte("vsock"), 0o755)
+	mustWriteAgentFile(t, filepath.Join(baseBinDir, "helper-tool"), []byte("tool"), 0o755)
 
 	_, err := copyAgentBinariesFromBase(baseBinDir, destDir)
 	if err == nil {

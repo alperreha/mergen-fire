@@ -214,7 +214,7 @@ else
   LDFLAGS_COMBINED="${BASE_LDFLAGS}"
 fi
 
-echo "building guest/base binaries (init + agent + vsock-guest)"
+echo "building guest/base binaries (init + agent)"
 echo "  target: ${TARGET_GOOS}/${TARGET_GOARCH}"
 echo "  cgo:    ${CGO_VALUE}"
 echo "  go:     ${GO_BIN}"
@@ -240,7 +240,6 @@ package_has_go_files() {
 pushd "${RUNTIME_ROOT}" >/dev/null
 build_cmd ./cmd/mergen-init "${OUTPUT_PATH}"
 build_cmd ./cmd/mergen-agent "${OUTPUT_DIR}/mergen-agent"
-build_cmd ./cmd/mergen-vsock-guest "${OUTPUT_DIR}/mergen-vsock-guest"
 
 if package_has_go_files ./cmd/mergen-supervisor; then
   build_cmd ./cmd/mergen-supervisor "${OUTPUT_DIR}/mergen-supervisor"
@@ -259,7 +258,6 @@ popd >/dev/null
 
 chmod +x "${OUTPUT_PATH}"
 chmod +x "${OUTPUT_DIR}/mergen-agent"
-chmod +x "${OUTPUT_DIR}/mergen-vsock-guest"
 for extra_bin in "${EXTRA_BINARIES[@]}"; do
   chmod +x "${OUTPUT_DIR}/${extra_bin}"
 done
@@ -282,7 +280,6 @@ cat > "${OUTPUT_DIR}/build-info.txt" <<INFO
 source=runtime/cmd/mergen-init
 binary=${OUTPUT_PATH}
 agent_binary=${OUTPUT_DIR}/mergen-agent
-vsock_guest_binary=${OUTPUT_DIR}/mergen-vsock-guest
 extra_binaries=${EXTRA_BINARIES_CSV}
 goos=${TARGET_GOOS}
 goarch=${TARGET_GOARCH}
@@ -299,12 +296,11 @@ if [[ "${INSTALL_BASE}" == "1" ]]; then
   mkdir -p "${BASE_BIN_DIR}"
   cp "${OUTPUT_PATH}" "${BASE_BIN_DIR}/sbin-init"
   cp "${OUTPUT_DIR}/mergen-agent" "${BASE_BIN_DIR}/mergen-agent"
-  cp "${OUTPUT_DIR}/mergen-vsock-guest" "${BASE_BIN_DIR}/mergen-vsock-guest"
   for extra_bin in "${EXTRA_BINARIES[@]}"; do
     cp "${OUTPUT_DIR}/${extra_bin}" "${BASE_BIN_DIR}/${extra_bin}"
   done
   cp "${OUTPUT_DIR}/build-info.txt" "${BASE_VERSION_DIR}/build-info.txt"
-  chmod +x "${BASE_BIN_DIR}/sbin-init" "${BASE_BIN_DIR}/mergen-agent" "${BASE_BIN_DIR}/mergen-vsock-guest"
+  chmod +x "${BASE_BIN_DIR}/sbin-init" "${BASE_BIN_DIR}/mergen-agent"
   for extra_bin in "${EXTRA_BINARIES[@]}"; do
     chmod +x "${BASE_BIN_DIR}/${extra_bin}"
   done
@@ -318,7 +314,6 @@ echo
 echo "build completed"
 echo "  binary: ${OUTPUT_PATH}"
 echo "  agent: ${OUTPUT_DIR}/mergen-agent"
-echo "  vsock guest: ${OUTPUT_DIR}/mergen-vsock-guest"
 if [[ ${#EXTRA_BINARIES[@]} -gt 0 ]]; then
   for extra_bin in "${EXTRA_BINARIES[@]}"; do
     echo "  ${extra_bin}: ${OUTPUT_DIR}/${extra_bin}"

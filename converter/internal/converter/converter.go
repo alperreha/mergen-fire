@@ -32,7 +32,6 @@ const (
 	defaultBaseAssetsDir  = "/var/lib/mergen/base/current"
 	defaultSbinInitPath   = "./artifacts/sbin-init/sbin-init"
 	defaultAgentPath      = "./artifacts/sbin-init/mergen-agent"
-	defaultVSockGuestPath = "./artifacts/sbin-init/mergen-vsock-guest"
 	defaultBootArgs       = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on random.trust_bootloader=on init=/sbin/init"
 	defaultRootFSOverhead = 256
 	defaultAgentOverhead  = 16
@@ -53,9 +52,6 @@ type Options struct {
 	SkipPull          bool
 	SbinInitPath      string
 	AgentPath         string
-	VSockEnable       bool
-	VSockGuestPath    string
-	VSockAuthToken    string
 	LegacyFullBundle  bool
 	BaseAssetsDir     string
 	BaseKernelPath    string
@@ -135,11 +131,6 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	if err := ensureReadableFile(normalized.AgentPath); err != nil {
 		return Result{}, err
-	}
-	if normalized.VSockEnable {
-		if err := ensureReadableFile(normalized.VSockGuestPath); err != nil {
-			return Result{}, err
-		}
 	}
 	if normalized.GoldenRootFS != "" {
 		if err := ensureReadableDir(normalized.GoldenRootFS); err != nil {
@@ -240,12 +231,6 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 		EnvReadOnly:       true,
 		EnvFile:           "/mnt/env/mergen.env",
 	}
-	if normalized.VSockEnable {
-		runtimeMeta.VSockEnabled = true
-		runtimeMeta.VSockGuestPath = "/mnt/agent/mergen-vsock-guest"
-		runtimeMeta.VSockShell = "/bin/sh"
-		runtimeMeta.VSockAuthToken = normalized.VSockAuthToken
-	}
 
 	runtimePath := filepath.Join(normalized.OutputDir, "mergen.runtime.json")
 	if err := writeRuntimeMetadata(runtimePath, runtimeMeta); err != nil {
@@ -267,7 +252,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	if err := injectRuntimeMetadata(runtimePath, envRootFSDir); err != nil {
 		return Result{}, err
 	}
-	if err := injectAgentBinaries(normalized.AgentPath, normalized.VSockGuestPath, normalized.VSockEnable, agentRootFSDir); err != nil {
+	if err := injectAgentBinaries(normalized.AgentPath, agentRootFSDir); err != nil {
 		return Result{}, err
 	}
 
@@ -329,7 +314,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	suggestedVMPath := filepath.Join(normalized.OutputDir, "suggested-vm-request.json")
-	if err := writeSuggestedVMRequest(suggestedVMPath, normalized.Image, goldenRootFSExt4, agentRootFSExt4, payloadRootFSExt4, envRootFSExt4, suggestedHTTPPort, normalized.VSockEnable); err != nil {
+	if err := writeSuggestedVMRequest(suggestedVMPath, normalized.Image, goldenRootFSExt4, agentRootFSExt4, payloadRootFSExt4, envRootFSExt4, suggestedHTTPPort); err != nil {
 		return Result{}, err
 	}
 
@@ -452,12 +437,6 @@ func (r *Runner) runPayloadOnly(ctx context.Context, normalized normalizedOption
 		PayloadMountPoint: "/mnt/payload",
 		PayloadReadOnly:   false,
 	}
-	if normalized.VSockEnable {
-		runtimeMeta.VSockEnabled = true
-		runtimeMeta.VSockGuestPath = "/mnt/agent/mergen-vsock-guest"
-		runtimeMeta.VSockShell = "/bin/sh"
-		runtimeMeta.VSockAuthToken = normalized.VSockAuthToken
-	}
 
 	runtimePath := filepath.Join(normalized.OutputDir, "mergen.runtime.json")
 	if err := writeRuntimeMetadata(runtimePath, runtimeMeta); err != nil {
@@ -577,9 +556,6 @@ type normalizedOptions struct {
 	SkipPull          bool
 	SbinInitPath      string
 	AgentPath         string
-	VSockEnable       bool
-	VSockGuestPath    string
-	VSockAuthToken    string
 	LegacyFullBundle  bool
 	BaseAssetsDir     string
 	BaseKernelPath    string
@@ -611,10 +587,6 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 	agentPath := strings.TrimSpace(opts.AgentPath)
 	if agentPath == "" {
 		agentPath = defaultAgentPath
-	}
-	vsockGuestPath := strings.TrimSpace(opts.VSockGuestPath)
-	if vsockGuestPath == "" {
-		vsockGuestPath = defaultVSockGuestPath
 	}
 	baseAssetsDir := strings.TrimSpace(opts.BaseAssetsDir)
 	if baseAssetsDir == "" {
@@ -661,9 +633,6 @@ func normalizeOptions(opts Options) (normalizedOptions, error) {
 		SkipPull:          opts.SkipPull,
 		SbinInitPath:      sbinInitPath,
 		AgentPath:         agentPath,
-		VSockEnable:       opts.VSockEnable,
-		VSockGuestPath:    vsockGuestPath,
-		VSockAuthToken:    strings.TrimSpace(opts.VSockAuthToken),
 		LegacyFullBundle:  opts.LegacyFullBundle,
 		BaseAssetsDir:     baseAssetsDir,
 		BaseKernelPath:    baseKernelPath,
@@ -1350,7 +1319,7 @@ func injectGoldenBinaries(opts normalizedOptions, goldenDir string) error {
 	return nil
 }
 
-func injectAgentBinaries(hostAgentPath, hostVSockGuestPath string, enableVSock bool, agentRootfsDir string) error {
+func injectAgentBinaries(hostAgentPath, agentRootfsDir string) error {
 	if err := os.MkdirAll(agentRootfsDir, 0o755); err != nil {
 		return fmt.Errorf("prepare agent rootfs: %w", err)
 	}
@@ -1362,19 +1331,6 @@ func injectAgentBinaries(hostAgentPath, hostVSockGuestPath string, enableVSock b
 	target := filepath.Join(agentRootfsDir, "mergen-agent")
 	if err := writeExecutableFileReplacingSymlink(target, agentBytes); err != nil {
 		return fmt.Errorf("write agent binary: %w", err)
-	}
-
-	if !enableVSock {
-		return nil
-	}
-
-	vsockGuestBytes, err := os.ReadFile(hostVSockGuestPath)
-	if err != nil {
-		return fmt.Errorf("read mergen vsock guest binary: %w", err)
-	}
-	vsockTarget := filepath.Join(agentRootfsDir, "mergen-vsock-guest")
-	if err := writeExecutableFileReplacingSymlink(vsockTarget, vsockGuestBytes); err != nil {
-		return fmt.Errorf("write vsock guest binary: %w", err)
 	}
 	return nil
 }
@@ -1665,7 +1621,7 @@ func inferHTTPPort(exposed map[string]struct{}) int {
 	return candidates[0].port
 }
 
-func writeSuggestedVMRequest(path, image, rootfsExt4, agentExt4, payloadExt4, envExt4 string, httpPort int, vsockEnabled bool) error {
+func writeSuggestedVMRequest(path, image, rootfsExt4, agentExt4, payloadExt4, envExt4 string, httpPort int) error {
 	if httpPort <= 0 {
 		httpPort = 80
 	}
@@ -1689,10 +1645,6 @@ func writeSuggestedVMRequest(path, image, rootfsExt4, agentExt4, payloadExt4, en
 		"metadata": map[string]any{
 			"image": image,
 		},
-	}
-	if vsockEnabled {
-		payload["vsockEnabled"] = true
-		payload["vsockGuestCID"] = 3
 	}
 
 	body, err := json.MarshalIndent(payload, "", "  ")
@@ -1733,10 +1685,6 @@ func writeSuggestedVMRequestFromBase(path string, normalized normalizedOptions, 
 	}
 	if strings.TrimSpace(normalized.BaseEnvDiskPath) != "" {
 		payload["envDisk"] = normalized.BaseEnvDiskPath
-	}
-	if normalized.VSockEnable {
-		payload["vsockEnabled"] = true
-		payload["vsockGuestCID"] = 3
 	}
 
 	body, err := json.MarshalIndent(payload, "", "  ")

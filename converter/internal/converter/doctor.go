@@ -3,15 +3,13 @@ package converter
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 type DoctorOptions struct {
-	BaseDir          string
-	RequireEnvDisk   bool
-	RequireVSockHost bool
+	BaseDir        string
+	RequireEnvDisk bool
 }
 
 type DoctorCheck struct {
@@ -68,8 +66,6 @@ func RunDoctor(opts DoctorOptions) DoctorReport {
 	appendCheck(checkExecutable("mergen-agent", filepath.Join(baseDir, "bin", "mergen-agent"), true))
 	appendCheck(checkExecutable("mergen-supervisor", filepath.Join(baseDir, "bin", "mergen-supervisor"), false))
 	appendCheck(checkExecutable("mergen-telemetry", filepath.Join(baseDir, "bin", "mergen-telemetry"), false))
-	appendCheck(checkExecutable("mergen-vsock-guest", filepath.Join(baseDir, "bin", "mergen-vsock-guest"), false))
-	appendCheck(checkBinaryInPath("mergen-vsock-host", opts.RequireVSockHost))
 
 	report.Passed = report.FailedRequired == 0
 	return report
@@ -192,17 +188,6 @@ func checkExt4Image(name, path string, required bool) DoctorCheck {
 		return DoctorCheck{Name: name, Path: path, Status: "warn", Required: required, Message: "ext4 image is writable; consider read-only permissions for base assets"}
 	}
 	return DoctorCheck{Name: name, Path: path, Status: "pass", Required: required, Message: "ext4 image looks valid"}
-}
-
-func checkBinaryInPath(name string, required bool) DoctorCheck {
-	path, err := exec.LookPath(name)
-	if err != nil {
-		if required {
-			return DoctorCheck{Name: name, Status: "fail", Required: true, Message: "binary not found in PATH"}
-		}
-		return DoctorCheck{Name: name, Status: "warn", Required: false, Message: "binary not found in PATH"}
-	}
-	return DoctorCheck{Name: name, Path: path, Status: "pass", Required: required, Message: "binary found in PATH"}
 }
 
 func buildMissingCheck(name, path string, required bool, err error) DoctorCheck {

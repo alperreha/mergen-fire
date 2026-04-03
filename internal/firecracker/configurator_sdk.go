@@ -80,11 +80,6 @@ func (s *SDKConfigurator) ConfigureAndStart(ctx context.Context, socketPath stri
 			return fmt.Errorf("network interface %s: %w", ifaceID, err)
 		}
 	}
-	if cfg.Vsock != nil {
-		if err := putVsock(ctx, opsClient, cfg.Vsock); err != nil {
-			return fmt.Errorf("vsock: %w", err)
-		}
-	}
 	if err := startInstance(ctx, opsClient); err != nil {
 		return fmt.Errorf("instance start: %w", err)
 	}
@@ -145,13 +140,6 @@ func putNetworkInterface(ctx context.Context, client fcops.ClientIface, nic *fcm
 	params.SetIfaceID(model.StringValue(nic.IfaceID))
 	params.SetBody(nic)
 	_, err := client.PutGuestNetworkInterfaceByID(params)
-	return err
-}
-
-func putVsock(ctx context.Context, client fcops.ClientIface, vsock *fcmodels.Vsock) error {
-	params := fcops.NewPutGuestVsockParamsWithContext(ctx)
-	params.SetBody(vsock)
-	_, err := client.PutGuestVsock(params)
 	return err
 }
 

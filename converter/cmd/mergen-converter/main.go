@@ -55,9 +55,6 @@ type convertOptions struct {
 	DeleteRootFS      bool
 	SbinInitPath      string
 	AgentPath         string
-	VSockEnable       bool
-	VSockGuestPath    string
-	VSockAuthToken    string
 	LegacyFullBundle  bool
 	BaseAssetsDir     string
 	BaseKernelPath    string
@@ -101,9 +98,6 @@ func newConvertCmd() *cobra.Command {
 	f.BoolVar(&opts.DeleteRootFS, "delete-rootfs", false, "Delete converted rootfs output for the selected image and exit")
 	f.StringVar(&opts.SbinInitPath, "sbin-init", "./artifacts/sbin-init/sbin-init", "Path to mergen-init binary (legacy mode only)")
 	f.StringVar(&opts.AgentPath, "sbin-agent", "./artifacts/sbin-init/mergen-agent", "Path to mergen-agent binary (legacy mode only)")
-	f.BoolVar(&opts.VSockEnable, "vsock-enable", false, "Enable VSock guest helper metadata")
-	f.StringVar(&opts.VSockGuestPath, "sbin-vsock-guest", "./artifacts/sbin-init/mergen-vsock-guest", "Path to mergen-vsock-guest binary (legacy mode only)")
-	f.StringVar(&opts.VSockAuthToken, "vsock-auth-token", "", "Optional VSock auth token written into runtime metadata")
 	f.BoolVar(&opts.LegacyFullBundle, "legacy-full-bundle", false, "Build golden/agent/env disks per image (legacy mode). Default mode builds payload only")
 	f.StringVar(&opts.BaseAssetsDir, "base-assets-dir", "/var/lib/mergen/base/current", "Base assets directory used in suggested VM request (kernel/rootfs/agent)")
 	f.StringVar(&opts.BaseKernelPath, "base-kernel", "", "Override base kernel path for suggested VM request")
@@ -208,9 +202,6 @@ func runConvert(opts convertOptions) error {
 		SkipPull:          opts.SkipPull,
 		SbinInitPath:      opts.SbinInitPath,
 		AgentPath:         opts.AgentPath,
-		VSockEnable:       opts.VSockEnable,
-		VSockGuestPath:    opts.VSockGuestPath,
-		VSockAuthToken:    opts.VSockAuthToken,
 		LegacyFullBundle:  opts.LegacyFullBundle,
 		BaseAssetsDir:     opts.BaseAssetsDir,
 		BaseKernelPath:    opts.BaseKernelPath,
@@ -255,10 +246,9 @@ func runConvert(opts convertOptions) error {
 }
 
 type doctorOptions struct {
-	BaseDir          string
-	RequireEnvDisk   bool
-	RequireVSockHost bool
-	JSON             bool
+	BaseDir        string
+	RequireEnvDisk bool
+	JSON           bool
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -274,16 +264,14 @@ func newDoctorCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.BaseDir, "base-dir", "/var/lib/mergen/base/current", "Base assets directory")
 	f.BoolVar(&opts.RequireEnvDisk, "require-env-disk", false, "Fail if env-rootfs.ext4 is missing")
-	f.BoolVar(&opts.RequireVSockHost, "require-vsock-host", false, "Fail if mergen-vsock-host is not found in PATH")
 	f.BoolVar(&opts.JSON, "json", false, "Print doctor report as JSON")
 	return cmd
 }
 
 func runDoctor(opts doctorOptions) error {
 	report := converter.RunDoctor(converter.DoctorOptions{
-		BaseDir:          opts.BaseDir,
-		RequireEnvDisk:   opts.RequireEnvDisk,
-		RequireVSockHost: opts.RequireVSockHost,
+		BaseDir:        opts.BaseDir,
+		RequireEnvDisk: opts.RequireEnvDisk,
 	})
 
 	if opts.JSON {

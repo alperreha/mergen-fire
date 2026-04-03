@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/alperreha/mergen-fire/pkg/guestspec"
-	"github.com/alperreha/mergen-fire/pkg/vsockcfg"
 	"golang.org/x/sys/unix"
 )
 
@@ -33,8 +32,6 @@ const (
 	defaultEnvFSType        = "ext4"
 	defaultEnvMountPath     = "/mnt/env"
 	defaultEnvFile          = "mergen.env"
-	defaultVSockGuestPath   = "/mnt/agent/mergen-vsock-guest"
-	defaultVSockShell       = "/bin/sh"
 	defaultPathEnv          = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 	defaultTelemetryIntervalSeconds = 10
@@ -67,20 +64,10 @@ func main() {
 		"source", specSource,
 		"runtimePath", runtimePath,
 		"envDevice", spec.EnvDevice,
-		"vsockEnabled", spec.VSockEnabled,
-		"vsockGuestPath", spec.VSockGuestPath,
-		"vsockDebug", spec.VSockDebug,
 	)
 
 	stopTelemetry := startTelemetry(logger)
 	defer stopTelemetry()
-
-	stopVSockGuest, err := startVSockGuest(spec, logger)
-	if err != nil {
-		logger.Error("start vsock guest failed", "error", err)
-		os.Exit(1)
-	}
-	defer stopVSockGuest()
 
 	if err := mountPayload(spec); err != nil {
 		logger.Error("mount payload failed", "device", spec.PayloadDevice, "mount", spec.PayloadMountPoint, "error", err)
@@ -137,8 +124,6 @@ func defaultRuntimeSpec() runtimeSpec {
 		EnvMountPoint:     defaultEnvMountPath,
 		EnvReadOnly:       true,
 		EnvFile:           filepath.Join(defaultEnvMountPath, defaultEnvFile),
-		VSockGuestPath:    defaultVSockGuestPath,
-		VSockShell:        defaultVSockShell,
 	}
 }
 
@@ -163,8 +148,6 @@ func loadRuntimeSpec(path string) (runtimeSpec, error) {
 	if spec.EnvFile == "" {
 		spec.EnvFile = filepath.Join(spec.EnvMountPoint, defaultEnvFile)
 	}
-	spec.VSockGuestPath = defaultIfEmpty(spec.VSockGuestPath, defaultVSockGuestPath)
-	spec.VSockShell = defaultIfEmpty(spec.VSockShell, defaultVSockShell)
 
 	return spec, nil
 }
@@ -273,81 +256,6 @@ func mountDisk(device, mountPoint, fsType string, readOnly bool) error {
 	return nil
 }
 
-func startVSockGuest(spec runtimeSpec, logger *slog.Logger) (func(), error) {
-	if !spec.VSockEnabled {
-		logger.Info("vsock guest disabled in runtime spec")
-		return func() {}, nil
-	}
-
-	guestPath := strings.TrimSpace(spec.VSockGuestPath)
-	if guestPath == "" {
-		guestPath = defaultVSockGuestPath
-	}
-	if _, err := os.Stat(guestPath); err != nil {
-		return nil, fmt.Errorf("vsock guest binary %s: %w", guestPath, err)
-	}
-
-	shellPath := strings.TrimSpace(spec.VSockShell)
-	if shellPath == "" {
-		shellPath = defaultVSockShell
-	}
-
-	args := []string{
-		"-shell", shellPath,
-	}
-	debugEnabled := spec.VSockDebug || boolFromEnv(vsockcfg.DebugEnvVar)
-	if debugEnabled {
-		args = append(args, "-debug")
-	}
-	cmd := exec.Command(guestPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	if token := strings.TrimSpace(spec.VSockAuthToken); token != "" {
-		cmd.Env = append(cmd.Env, "MERGEN_VSOCK_AUTH_TOKEN="+token)
-	}
-	if debugEnabled {
-		cmd.Env = append(cmd.Env, vsockcfg.DebugEnvVar+"=1")
-	}
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start vsock guest: %w", err)
-	}
-	logger.Info("vsock guest listener started", "path", guestPath, "channel", vsockcfg.ShellPort, "debug", debugEnabled)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	return func() {
-		select {
-		case err := <-done:
-			if err != nil {
-				logger.Warn("vsock guest exited", "error", err)
-			}
-			return
-		default:
-		}
-
-		if cmd.Process != nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-		}
-		select {
-		case err := <-done:
-			if err != nil {
-				logger.Warn("vsock guest exited", "error", err)
-			}
-		case <-time.After(3 * time.Second):
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			if err := <-done; err != nil {
-				logger.Warn("vsock guest killed", "error", err)
-			}
-		}
-	}, nil
-}
 func buildRuntimeEnv(spec runtimeSpec) (map[string]string, error) {
 	env := envFromList(os.Environ())
 	mergeMap(env, envFromList(spec.Env))

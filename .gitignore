@@ -1,4 +1,6 @@
 .gocache
+.gocache*
+
 .cache/
 certs/
 artifacts/converter/
