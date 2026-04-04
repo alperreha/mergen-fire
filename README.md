@@ -20,7 +20,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
   - [1. Run `mergen` daemon](#1-run-mergen-daemon)
   - [2. Set up and run `mergen-forwarder`](#2-set-up-and-run-mergen-forwarder)
   - [3. Convert OCI image with `mergen-converter`](#3-convert-oci-image-with-mergen-converter)
-  - [4. Sync base and payload artifacts with S3/MinIO](#4-sync-base-and-payload-artifacts-with-s3minio)
+  - [4. Sync Base Artifacts with Config S3/MinIO](#4-sync-base-artifacts-with-config-s3minio)
   - [5. End-to-end test with API and curl](#5-end-to-end-test-with-api-and-curl)
 - [API behavior notes](#api-behavior-notes)
 - [Configuration](#configuration)
@@ -67,7 +67,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 ## Architecture
 
 - **Control plane:** Go HTTP API server (`cmd/mergen server`)
-- **CLI plane:** `cmd/mergen` (`server`, `images ls/push/pull`)
+- **CLI plane:** `cmd/mergen` (`server`, `config init/login`, `images ls`, `images pull/push base`)
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
 - **Image conversion plane:** Registry-image-to-rootfs converter (`converter/cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
@@ -82,6 +82,7 @@ Forwarder design details: `docs/forwarder-design.md`
 - `cmd/mergen-forwarder`: TLS SNI forwarder
 - `converter/cmd/mergen-converter`: registry image conversion CLI
 - `converter/internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
+- `converter/README.md`: standalone converter usage, login, push, and pull flow
 - `runtime/cmd/mergen-init`: in-guest init/PID1 runtime
 - `runtime/cmd/mergen-agent`: payload launcher inside guest
 - `internal/api`: REST handlers
@@ -339,6 +340,18 @@ Default output path follows image reference hierarchy under `/var/lib/mergen/ima
 - `nginx:alpine` -> `/var/lib/mergen/images/nginx:alpine`
 - `ghcr.io/org/app:1.2.3` -> `/var/lib/mergen/images/ghcr.io/org/app:1.2.3`
 
+Converter can also work like a lightweight registry client for payload disks:
+
+```bash
+go run ./converter/cmd/mergen-converter init --registry default
+go run ./converter/cmd/mergen-converter login --registry default
+go run ./converter/cmd/mergen-converter push --registry default --image "$IMAGE"
+go run ./converter/cmd/mergen-converter pull --registry default --image "$IMAGE"
+```
+
+`init` stores user S3 / MinIO profile details locally, `login` stores username/password for that profile, and `push` / `pull` transfer only `payload-rootfs.ext4`.
+This keeps `mergen-converter` usable as a standalone external tool on another machine without the rest of the Mergen host stack.
+
 Converter outputs:
 
 - `payload-rootfs/` extracted image filesystem
@@ -393,15 +406,21 @@ CLI output uses emojis for readability:
 - `❌ FAIL`
 - `⚠️ WARN`
 
-### 4. Sync base and payload artifacts with S3/MinIO
+### 4. Sync Base Artifacts with Config S3/MinIO
 
 Copy [env.template](/Users/alperreha/Desktop/alper/workspace/go/mergen-fire/env.template) into your shell or process manager environment and set at least:
 
-- `MGR_S3_BUCKET`
-- `MGR_S3_USERNAME`
-- `MGR_S3_REGION`
-- `MGR_S3_ENDPOINT` for MinIO or another S3-compatible endpoint
-- `MGR_S3_ACCESS_KEY_ID` / `MGR_S3_SECRET_ACCESS_KEY`
+- `MGR_CONFIG_S3_BUCKET`
+- `MGR_CONFIG_S3_REGION`
+- `MGR_CONFIG_S3_ENDPOINT` for MinIO or another S3-compatible endpoint
+- `MGR_CONFIG_S3_ACCESS_KEY_ID` / `MGR_CONFIG_S3_SECRET_ACCESS_KEY`
+
+Initialize and store the config registry profile used for base image distribution:
+
+```bash
+go run ./cmd/mergen config init --registry default
+go run ./cmd/mergen config login --registry default
+```
 
 List what exists locally under `/var/lib/mergen/base/current` and `/var/lib/mergen/images`:
 
@@ -409,29 +428,47 @@ List what exists locally under `/var/lib/mergen/base/current` and `/var/lib/merg
 go run ./cmd/mergen images ls
 ```
 
-Push shared base artifacts:
+Push shared base artifacts as an admin:
 
 ```bash
-go run ./cmd/mergen images push base
+go run ./cmd/mergen images push base \
+  --registry default \
+  --platform linux-amd64 \
+  --flavor buildroot \
+  --version v0.0.1
 ```
 
 Pull shared base artifacts onto a new machine:
 
 ```bash
-go run ./cmd/mergen images pull base
+go run ./cmd/mergen images pull base \
+  --registry default \
+  --platform linux-amd64 \
+  --flavor buildroot \
+  --version latest
 ```
 
-Push one converted payload bundle:
+Remote config-S3 layout for base artifacts:
 
-```bash
-go run ./cmd/mergen images push payload --image nginx:alpine
+```text
+<prefix>/mergen/<platform>/<flavor>/<version>/manifest.json
+<prefix>/mergen/<platform>/<flavor>/<version>/vmlinux.bin
+<prefix>/mergen/<platform>/<flavor>/<version>/<flavor>-disk.ext4
+<prefix>/mergen/<platform>/<flavor>/<version>/agent-disk.ext4
 ```
 
-Pull that payload onto another machine:
+Example:
 
-```bash
-go run ./cmd/mergen images pull payload --image nginx:alpine
+```text
+artifacts/mergen/linux-amd64/buildroot/v0.0.1/vmlinux.bin
+artifacts/mergen/linux-amd64/buildroot/v0.0.1/buildroot-disk.ext4
+artifacts/mergen/linux-amd64/buildroot/v0.0.1/agent-disk.ext4
+artifacts/mergen/linux-amd64/buildroot/latest/vmlinux.bin
+artifacts/mergen/linux-amd64/buildroot/latest/buildroot-disk.ext4
+artifacts/mergen/linux-amd64/buildroot/latest/agent-disk.ext4
 ```
+
+`mergen images pull base` is a read-only S3 fetch for already published base disks. Payload conversion and user payload push/pull stay in [converter/README.md](/Users/alperreha/Desktop/alper/workspace/go/mergen-fire/converter/README.md) under `mergen-converter`.
 
 Uploads and downloads emit byte progress continuously in the CLI, and the same progress model is reused internally so HTTP/SSE style progress endpoints can be added later without changing the transfer core.
 
@@ -516,15 +553,19 @@ Environment variables:
 - `MGR_DEFAULT_ROOTFS` (default `<MGR_BASE_ASSETS_DIR>/golden-rootfs.ext4`)
 - `MGR_DEFAULT_AGENT_DISK` (default `<MGR_BASE_ASSETS_DIR>/agent-rootfs.ext4`)
 - `MGR_DEFAULT_ENV_DISK` (default empty, optional)
-- `MGR_S3_ENDPOINT` (optional for AWS, required for MinIO/local S3)
-- `MGR_S3_REGION` (default `us-east-1`)
-- `MGR_S3_BUCKET`
-- `MGR_S3_PREFIX` (default `users`)
-- `MGR_S3_USERNAME`
-- `MGR_S3_ACCESS_KEY_ID`
-- `MGR_S3_SECRET_ACCESS_KEY`
-- `MGR_S3_SESSION_TOKEN` (optional)
-- `MGR_S3_USE_PATH_STYLE` (default `false`, set `true` for MinIO)
+- `MERGEN_CONFIG_FILE` (default `~/.config/mergen/config.json`)
+- `MGR_CONFIG_S3_ENDPOINT` (optional for AWS, required for MinIO/local S3)
+- `MGR_CONFIG_S3_REGION` (default `us-east-1`)
+- `MGR_CONFIG_S3_BUCKET`
+- `MGR_CONFIG_S3_PREFIX` (default `artifacts`)
+- `MGR_CONFIG_S3_USERNAME` (used for admin login metadata, not S3 key layout)
+- `MGR_CONFIG_S3_PASSWORD` (used for local admin login metadata)
+- `MGR_CONFIG_S3_ACCESS_KEY_ID`
+- `MGR_CONFIG_S3_SECRET_ACCESS_KEY`
+- `MGR_CONFIG_S3_SESSION_TOKEN` (optional)
+- `MGR_CONFIG_S3_USE_PATH_STYLE` (default `false`, set `true` for MinIO)
+- `MGR_BASE_PLATFORM` (default `linux-<host-arch>`)
+- `MGR_BASE_FLAVOR` (default `buildroot`)
 - `MGR_PROGRESS_EVERY_MILLISECONDS` (default `250`)
 - `MGR_LOG_LEVEL` (default `info`, values: `debug|info|warn|error`)
 - `MGR_LOG_FORMAT` (default `console`, values: `console|json|text`)

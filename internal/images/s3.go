@@ -34,21 +34,18 @@ type S3Store struct {
 }
 
 func NewS3Store(ctx context.Context, cfg config.Config) (*S3Store, error) {
-	if strings.TrimSpace(cfg.S3Bucket) == "" {
-		return nil, errors.New("MGR_S3_BUCKET is required")
-	}
-	if strings.TrimSpace(cfg.S3Username) == "" {
-		return nil, errors.New("MGR_S3_USERNAME is required")
+	if strings.TrimSpace(cfg.ConfigS3Bucket) == "" {
+		return nil, errors.New("MGR_CONFIG_S3_BUCKET is required")
 	}
 
 	loadOpts := []func(*awscfg.LoadOptions) error{
-		awscfg.WithRegion(strings.TrimSpace(cfg.S3Region)),
+		awscfg.WithRegion(strings.TrimSpace(cfg.ConfigS3Region)),
 	}
-	if strings.TrimSpace(cfg.S3AccessKeyID) != "" || strings.TrimSpace(cfg.S3SecretKey) != "" {
+	if strings.TrimSpace(cfg.ConfigS3AccessKey) != "" || strings.TrimSpace(cfg.ConfigS3SecretKey) != "" {
 		loadOpts = append(loadOpts, awscfg.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			strings.TrimSpace(cfg.S3AccessKeyID),
-			strings.TrimSpace(cfg.S3SecretKey),
-			strings.TrimSpace(cfg.S3SessionToken),
+			strings.TrimSpace(cfg.ConfigS3AccessKey),
+			strings.TrimSpace(cfg.ConfigS3SecretKey),
+			strings.TrimSpace(cfg.ConfigS3SessionToken),
 		)))
 	}
 
@@ -58,10 +55,10 @@ func NewS3Store(ctx context.Context, cfg config.Config) (*S3Store, error) {
 	}
 
 	client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
-		if endpoint := strings.TrimSpace(cfg.S3Endpoint); endpoint != "" {
+		if endpoint := strings.TrimSpace(cfg.ConfigS3Endpoint); endpoint != "" {
 			o.BaseEndpoint = awsv2.String(endpoint)
 		}
-		o.UsePathStyle = cfg.S3UsePathStyle
+		o.UsePathStyle = cfg.ConfigS3PathStyle
 		o.HTTPClient = &http.Client{
 			Timeout: 0,
 		}
@@ -69,19 +66,23 @@ func NewS3Store(ctx context.Context, cfg config.Config) (*S3Store, error) {
 
 	return &S3Store{
 		client:        client,
-		bucket:        strings.TrimSpace(cfg.S3Bucket),
-		prefix:        strings.Trim(strings.TrimSpace(cfg.S3Prefix), "/"),
-		username:      strings.TrimSpace(cfg.S3Username),
+		bucket:        strings.TrimSpace(cfg.ConfigS3Bucket),
+		prefix:        strings.Trim(strings.TrimSpace(cfg.ConfigS3Prefix), "/"),
+		username:      strings.TrimSpace(cfg.ConfigS3Username),
 		progressEvery: cfg.ProgressEvery,
 	}, nil
 }
 
-func (s *S3Store) BaseManifestKey() string {
-	return s.joinKey(s.prefix, s.username, "base", "current", manifestFile)
+func (s *S3Store) BaseManifestKey(ref BaseRef) string {
+	return s.joinKey(s.BasePrefix(ref), manifestFile)
 }
 
-func (s *S3Store) BaseFileKey(name string) string {
-	return s.joinKey(s.prefix, s.username, "base", "current", filepath.ToSlash(name))
+func (s *S3Store) BaseFileKey(ref BaseRef, remoteName string) string {
+	return s.joinKey(s.BasePrefix(ref), filepath.ToSlash(remoteName))
+}
+
+func (s *S3Store) BasePrefix(ref BaseRef) string {
+	return s.joinKey(s.prefix, "mergen", ref.Platform, ref.Flavor, ref.Version)
 }
 
 func (s *S3Store) PayloadManifestKey(imageRef string) string {
@@ -223,6 +224,18 @@ func (s *S3Store) PutManifest(ctx context.Context, key string, manifest Manifest
 	return nil
 }
 
+func (s *S3Store) CopyObject(ctx context.Context, sourceKey, destinationKey string) error {
+	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     awsv2.String(s.bucket),
+		CopySource: awsv2.String(s.bucket + "/" + sourceKey),
+		Key:        awsv2.String(destinationKey),
+	})
+	if err != nil {
+		return fmt.Errorf("copy object %s -> %s: %w", sourceKey, destinationKey, err)
+	}
+	return nil
+}
+
 func (s *S3Store) GetManifest(ctx context.Context, key string) (Manifest, error) {
 	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: awsv2.String(s.bucket),
@@ -260,6 +273,14 @@ func (s *S3Store) NewManifest(kind, name string) Manifest {
 		UploadedAt: time.Now().UTC(),
 		Platform:   runtime.GOOS + "/" + runtime.GOARCH,
 	}
+}
+
+func (s *S3Store) NewBaseManifest(ref BaseRef) Manifest {
+	manifest := s.NewManifest(ArtifactKindBase, ref.Name())
+	manifest.Platform = ref.Platform
+	manifest.Flavor = ref.Flavor
+	manifest.Version = ref.Version
+	return manifest
 }
 
 func escapeRef(ref string) string {

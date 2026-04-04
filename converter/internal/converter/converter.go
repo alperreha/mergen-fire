@@ -43,6 +43,12 @@ const (
 	defaultEnvLine        = "Mergen=is super"
 )
 
+type ImageTarget struct {
+	Image     string
+	OutputDir string
+	Name      string
+}
+
 type Options struct {
 	Image             string
 	OutputDir         string
@@ -657,7 +663,7 @@ func normalizeTarget(imageRaw, outputDirRaw, nameRaw string) (normalizedTarget, 
 	if outputDir == "" {
 		if name != "" {
 			name = sanitizeName(name)
-			outputDir = filepath.Join(defaultOutputBase, name)
+			outputDir = filepath.Join(outputBaseDir(), name)
 		} else {
 			outputDir = defaultOutputDirForImage(image)
 			name = filepath.Base(outputDir)
@@ -680,7 +686,7 @@ func defaultOutputDirForImage(image string) string {
 	raw = strings.TrimPrefix(raw, "//")
 	raw = strings.Trim(raw, "/")
 	if raw == "" {
-		return filepath.Join(defaultOutputBase, "image-rootfs")
+		return filepath.Join(outputBaseDir(), "image-rootfs")
 	}
 
 	parts := strings.Split(raw, "/")
@@ -697,9 +703,28 @@ func defaultOutputDirForImage(image string) string {
 	}
 
 	allParts := make([]string, 0, len(safeParts)+1)
-	allParts = append(allParts, defaultOutputBase)
+	allParts = append(allParts, outputBaseDir())
 	allParts = append(allParts, safeParts...)
 	return filepath.Join(allParts...)
+}
+
+func outputBaseDir() string {
+	if value := strings.TrimSpace(os.Getenv("MERGEN_CONVERTER_OUTPUT_ROOT")); value != "" {
+		return filepath.Clean(value)
+	}
+	return defaultOutputBase
+}
+
+func ResolveImageTarget(image, outputDir, name string) (ImageTarget, error) {
+	target, err := normalizeTarget(image, outputDir, name)
+	if err != nil {
+		return ImageTarget{}, err
+	}
+	return ImageTarget{
+		Image:     target.Image,
+		OutputDir: target.OutputDir,
+		Name:      target.Name,
+	}, nil
 }
 
 func sanitizePathSegment(raw string) string {

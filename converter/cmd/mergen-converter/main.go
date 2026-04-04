@@ -23,7 +23,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "mergen-converter",
-		Short:         "Convert OCI images to Firecracker payload rootfs bundles",
+		Short:         "Convert OCI images and push/pull payload rootfs.ext4 bundles with user S3",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -33,6 +33,10 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(newConvertCmd())
 	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newInitCmd())
+	root.AddCommand(newLoginCmd())
+	root.AddCommand(newPushCmd())
+	root.AddCommand(newPullCmd())
 	return root
 }
 
@@ -72,8 +76,9 @@ type convertOptions struct {
 func newConvertCmd() *cobra.Command {
 	opts := &convertOptions{}
 	cmd := &cobra.Command{
-		Use:   "convert",
-		Short: "Convert image and produce payload rootfs artifacts",
+		Use:     "convert",
+		Aliases: []string{"create"},
+		Short:   "Convert image and produce payload rootfs artifacts",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runConvert(*opts)
 		},

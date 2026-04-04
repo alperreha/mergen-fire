@@ -43,6 +43,8 @@ type Manifest struct {
 	Username   string         `json:"username"`
 	UploadedAt time.Time      `json:"uploadedAt"`
 	Platform   string         `json:"platform,omitempty"`
+	Flavor     string         `json:"flavor,omitempty"`
+	Version    string         `json:"version,omitempty"`
 	Files      []ManifestFile `json:"files"`
 }
 
@@ -60,6 +62,9 @@ type SyncSummary struct {
 	Prefix      string         `json:"prefix"`
 	ManifestKey string         `json:"manifestKey"`
 	LocalDir    string         `json:"localDir"`
+	Platform    string         `json:"platform,omitempty"`
+	Flavor      string         `json:"flavor,omitempty"`
+	Version     string         `json:"version,omitempty"`
 	Transferred []ManifestFile `json:"transferred"`
 	CompletedAt time.Time      `json:"completedAt"`
 }

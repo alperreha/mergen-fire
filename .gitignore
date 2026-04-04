@@ -1,5 +1,7 @@
 .gocache
 .gocache*
+.gopath
+.go*
 
 .cache/
 certs/
