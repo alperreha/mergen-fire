@@ -11,10 +11,8 @@ Usage:
 Options:
   --output-dir PATH     Output directory (default: <repo>/artifacts/sbin-init)
   --output-name NAME    Output init binary name (default: sbin-init)
-  --install-base        Also install binaries into versioned base dir
-  --base-dir PATH       Base directory root (default: /var/lib/mergen/base)
-  --base-version NAME   Base version directory name (default: auto from git sha + utc time)
-  --no-current-link     Do not update <base-dir>/current symlink
+  --install-base        Also install binaries into base/current dir
+  --base-dir PATH       Base assets directory (default: /var/lib/mergen/base/current)
   --go-bin PATH         Absolute go binary path (overrides PATH lookup)
   --goos OS             Target GOOS (default: linux)
   --goarch ARCH         Target GOARCH (default: amd64)
@@ -44,9 +42,7 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${WORKSPACE_ROOT}/artifacts/sbin-init"
 OUTPUT_NAME="sbin-init"
 INSTALL_BASE="0"
-BASE_DIR="/var/lib/mergen/base"
-BASE_VERSION=""
-UPDATE_CURRENT_LINK="1"
+BASE_DIR="/var/lib/mergen/base/current"
 TARGET_GOOS="linux"
 TARGET_GOARCH="amd64"
 CGO_VALUE="0"
@@ -70,14 +66,6 @@ while [[ $# -gt 0 ]]; do
     --base-dir)
       BASE_DIR="${2:-}"
       shift 2
-      ;;
-    --base-version)
-      BASE_VERSION="${2:-}"
-      shift 2
-      ;;
-    --no-current-link)
-      UPDATE_CURRENT_LINK="0"
-      shift
       ;;
     --goos)
       TARGET_GOOS="${2:-}"
@@ -267,10 +255,6 @@ if command -v git >/dev/null 2>&1; then
   GIT_SHA="$(git -C "${WORKSPACE_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 fi
 
-if [[ -z "${BASE_VERSION}" ]]; then
-  BASE_VERSION="${GIT_SHA}-$(date -u +"%Y%m%d%H%M%S")"
-fi
-
 EXTRA_BINARIES_CSV=""
 if [[ ${#EXTRA_BINARIES[@]} -gt 0 ]]; then
   EXTRA_BINARIES_CSV="$(IFS=,; echo "${EXTRA_BINARIES[*]}")"
@@ -290,7 +274,7 @@ built_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 INFO
 
 if [[ "${INSTALL_BASE}" == "1" ]]; then
-  BASE_VERSION_DIR="${BASE_DIR}/${BASE_VERSION}"
+  BASE_VERSION_DIR="${BASE_DIR}"
   BASE_BIN_DIR="${BASE_VERSION_DIR}/bin"
   echo "installing to base dir: ${BASE_VERSION_DIR}"
   mkdir -p "${BASE_BIN_DIR}"
@@ -304,10 +288,6 @@ if [[ "${INSTALL_BASE}" == "1" ]]; then
   for extra_bin in "${EXTRA_BINARIES[@]}"; do
     chmod +x "${BASE_BIN_DIR}/${extra_bin}"
   done
-
-  if [[ "${UPDATE_CURRENT_LINK}" == "1" ]]; then
-    ln -sfn "${BASE_VERSION}" "${BASE_DIR}/current"
-  fi
 fi
 
 echo
@@ -321,8 +301,5 @@ if [[ ${#EXTRA_BINARIES[@]} -gt 0 ]]; then
 fi
 echo "  info:   ${OUTPUT_DIR}/build-info.txt"
 if [[ "${INSTALL_BASE}" == "1" ]]; then
-  echo "  base:   ${BASE_DIR}/${BASE_VERSION}"
-  if [[ "${UPDATE_CURRENT_LINK}" == "1" ]]; then
-    echo "  current symlink: ${BASE_DIR}/current -> ${BASE_VERSION}"
-  fi
+  echo "  base:   ${BASE_DIR}"
 fi

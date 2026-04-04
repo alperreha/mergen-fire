@@ -62,68 +62,6 @@ func TestRunDoctorWarnsForOptionalEnvDisk(t *testing.T) {
 	}
 }
 
-func TestRunDoctorCurrentSymlinkPass(t *testing.T) {
-	baseRoot := t.TempDir()
-	versionDir := filepath.Join(baseRoot, "v20260306")
-	if err := os.MkdirAll(filepath.Join(versionDir, "bin"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	mustWriteFile(t, filepath.Join(versionDir, "vmlinux"), []byte("kernel"), 0o444)
-	mustWriteExt4Magic(t, filepath.Join(versionDir, "golden-rootfs.ext4"), 0o444)
-	mustWriteExt4Magic(t, filepath.Join(versionDir, "agent-rootfs.ext4"), 0o444)
-	mustWriteFile(t, filepath.Join(versionDir, "bin", "sbin-init"), []byte("x"), 0o555)
-	mustWriteFile(t, filepath.Join(versionDir, "bin", "mergen-agent"), []byte("x"), 0o555)
-
-	currentPath := filepath.Join(baseRoot, "current")
-	if err := os.Symlink(versionDir, currentPath); err != nil {
-		t.Fatalf("symlink current: %v", err)
-	}
-
-	report := RunDoctor(DoctorOptions{BaseDir: currentPath})
-	if !report.Passed {
-		t.Fatalf("expected passed report, got failedRequired=%d warnings=%d", report.FailedRequired, report.Warnings)
-	}
-	resolvedVersionDir, err := filepath.EvalSymlinks(versionDir)
-	if err != nil {
-		t.Fatalf("resolve version dir: %v", err)
-	}
-	if report.ResolvedBaseDir != resolvedVersionDir {
-		t.Fatalf("expected resolved base dir %q, got %q", resolvedVersionDir, report.ResolvedBaseDir)
-	}
-	check, ok := findCheck(report.Checks, "base-current-symlink")
-	if !ok {
-		t.Fatalf("expected base-current-symlink check")
-	}
-	if check.Status != "pass" {
-		t.Fatalf("expected current symlink check pass, got %q", check.Status)
-	}
-}
-
-func TestRunDoctorCurrentSymlinkFailWhenNotSymlink(t *testing.T) {
-	baseRoot := t.TempDir()
-	currentPath := filepath.Join(baseRoot, "current")
-	if err := os.MkdirAll(filepath.Join(currentPath, "bin"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	mustWriteFile(t, filepath.Join(currentPath, "vmlinux"), []byte("kernel"), 0o444)
-	mustWriteExt4Magic(t, filepath.Join(currentPath, "golden-rootfs.ext4"), 0o444)
-	mustWriteExt4Magic(t, filepath.Join(currentPath, "agent-rootfs.ext4"), 0o444)
-	mustWriteFile(t, filepath.Join(currentPath, "bin", "sbin-init"), []byte("x"), 0o555)
-	mustWriteFile(t, filepath.Join(currentPath, "bin", "mergen-agent"), []byte("x"), 0o555)
-
-	report := RunDoctor(DoctorOptions{BaseDir: currentPath})
-	if report.Passed {
-		t.Fatalf("expected failed report when current is not symlink")
-	}
-	check, ok := findCheck(report.Checks, "base-current-symlink")
-	if !ok {
-		t.Fatalf("expected base-current-symlink check")
-	}
-	if check.Status != "fail" {
-		t.Fatalf("expected current symlink check fail, got %q", check.Status)
-	}
-}
-
 func mustWriteFile(t *testing.T, path string, content []byte, mode os.FileMode) {
 	t.Helper()
 	if err := os.WriteFile(path, content, mode); err != nil {

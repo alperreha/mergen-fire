@@ -8,20 +8,22 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/alperreha/mergen-fire/internal/images"
 	"github.com/alperreha/mergen-fire/internal/manager"
 	"github.com/alperreha/mergen-fire/internal/model"
 )
 
 type Handler struct {
 	service *manager.Service
+	images  *images.Service
 	logger  *slog.Logger
 }
 
-func Register(e *echo.Echo, service *manager.Service, logger *slog.Logger) {
+func Register(e *echo.Echo, service *manager.Service, imageService *images.Service, logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	handler := &Handler{service: service, logger: logger}
+	handler := &Handler{service: service, images: imageService, logger: logger}
 
 	v1 := e.Group("/v1")
 	v1.POST("/vms", handler.createVM)
@@ -33,6 +35,7 @@ func Register(e *echo.Echo, service *manager.Service, logger *slog.Logger) {
 	v1.GET("/vms/:id/vm.json", handler.getVMConfig)
 	v1.GET("/vms/:id/hooks.json", handler.getVMHooks)
 	v1.GET("/vms", handler.listVMs)
+	v1.GET("/images", handler.listImages)
 }
 
 func (h *Handler) createVM(c echo.Context) error {
@@ -152,6 +155,19 @@ func (h *Handler) listVMs(c echo.Context) error {
 	}
 	h.logger.Debug("http list vms success", "count", len(vms))
 	return c.JSON(http.StatusOK, map[string]any{"items": vms})
+}
+
+func (h *Handler) listImages(c echo.Context) error {
+	if h.images == nil {
+		return c.JSON(http.StatusServiceUnavailable, errorResponse("dependency_unavailable", errors.New("image service unavailable")))
+	}
+	h.logger.Debug("http list images", "method", c.Request().Method, "path", c.Request().URL.Path)
+	catalog, err := h.images.ListLocal(c.Request().Context())
+	if err != nil {
+		h.logger.Error("http list images failed", "error", err)
+		return c.JSON(http.StatusInternalServerError, errorResponse("internal_error", err))
+	}
+	return c.JSON(http.StatusOK, catalog)
 }
 
 func (h *Handler) writeServiceError(c echo.Context, err error) error {

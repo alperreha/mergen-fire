@@ -8,7 +8,7 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 `mergen-fire` provides:
 
-- `mergend`: VM lifecycle manager (control-plane)
+- `mergen`: daemon + image lifecycle CLI
 - `mergen-forwarder`: TLS SNI terminating netns-aware TCP proxy (pre-Envoy dataplane bridge)
 - `mergen-converter`: OCI/Docker registry image -> OCI-aligned MicroVM rootfs converter
 - `mergen-init`: Go PID1 init binary for converted rootfs
@@ -17,10 +17,11 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
-  - [1. Run `mergend` daemon](#1-run-mergend-daemon)
+  - [1. Run `mergen` daemon](#1-run-mergen-daemon)
   - [2. Set up and run `mergen-forwarder`](#2-set-up-and-run-mergen-forwarder)
   - [3. Convert OCI image with `mergen-converter`](#3-convert-oci-image-with-mergen-converter)
-  - [4. End-to-end test with API and curl](#4-end-to-end-test-with-api-and-curl)
+  - [4. Sync base and payload artifacts with S3/MinIO](#4-sync-base-and-payload-artifacts-with-s3minio)
+  - [5. End-to-end test with API and curl](#5-end-to-end-test-with-api-and-curl)
 - [API behavior notes](#api-behavior-notes)
 - [Configuration](#configuration)
 - [Forwarder Configuration](#forwarder-configuration)
@@ -42,10 +43,11 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
   - `POST /v1/vms/:id/stop`
   - `DELETE /v1/vms/:id`
   - `GET /v1/vms/:id`
-  - `GET /v1/vms/:id/meta.json`
-  - `GET /v1/vms/:id/vm.json`
-  - `GET /v1/vms/:id/hooks.json`
-  - `GET /v1/vms`
+- `GET /v1/vms/:id/meta.json`
+- `GET /v1/vms/:id/vm.json`
+- `GET /v1/vms/:id/hooks.json`
+- `GET /v1/vms`
+- `GET /v1/images`
 - File store:
   - `vm.json` (Firecracker config)
   - `meta.json` (manager metadata)
@@ -64,7 +66,8 @@ Minimal **Firecracker control-plane + TLS forwarder** in Go.
 
 ## Architecture
 
-- **Control plane:** Go HTTP API server (`cmd/mergend`)
+- **Control plane:** Go HTTP API server (`cmd/mergen server`)
+- **CLI plane:** `cmd/mergen` (`server`, `images ls/push/pull`)
 - **Forwarding plane (pre-Envoy):** TLS SNI proxy (`cmd/mergen-forwarder`)
 - **Image conversion plane:** Registry-image-to-rootfs converter (`converter/cmd/mergen-converter`)
 - **Data plane:** `systemd` + Firecracker/Jailer processes
@@ -74,7 +77,8 @@ Forwarder design details: `docs/forwarder-design.md`
 
 ## Repository layout
 
-- `cmd/mergend`: manager daemon API entrypoint
+- `cmd/mergen`: daemon + image lifecycle CLI entrypoint
+- `cmd/mergend`: legacy daemon-only wrapper around `mergen server`
 - `cmd/mergen-forwarder`: TLS SNI forwarder
 - `converter/cmd/mergen-converter`: registry image conversion CLI
 - `converter/internal/converter`: native image pull/cache/rootfs/ext4 conversion pipeline
@@ -114,7 +118,7 @@ Optional (only for legacy helper script `scripts/build-rootfs-from-dockerhub.sh`
 
 ## Quick start
 
-### 1. Run `mergend` daemon - Terminal-1
+### 1. Run `mergen` daemon - Terminal-1
 
 Install systemd template + lifecycle binary (Linux host):
 
@@ -130,7 +134,7 @@ sudo systemctl daemon-reload
 Run daemon:
 
 ```bash
-go run ./cmd/mergend
+go run ./cmd/mergen server
 ```
 
 Health check:
@@ -151,7 +155,8 @@ latest_kernel_key="$(curl "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecra
   | grep -oP "(firecracker-ci/${CI_VERSION}/${ARCH}/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})" \
   | sort -V | tail -1)"
 
-sudo wget -O /var/lib/mergen/base/vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${latest_kernel_key}"
+sudo install -d -m 0755 /var/lib/mergen/base/current
+sudo wget -O /var/lib/mergen/base/current/vmlinux "https://s3.amazonaws.com/spec.ccfc.min/${latest_kernel_key}"
 ```
 
 ### 2. Set up and run `mergen-forwarder` - Terminal-2
@@ -202,54 +207,47 @@ Forwarder behavior:
 
 ### 3. Convert OCI image with `mergen-converter` - Terminal-3
 
-Build and install guest/base binaries into a versioned base directory:
+Build and install guest/base binaries directly into `/var/lib/mergen/base/current`:
 
 ```bash
-export BASE_DIR="/var/lib/mergen/base"
-export BASE_VERSION="v$(date -u +%Y%m%d%H%M%S)"
+export BASE_DIR="/var/lib/mergen/base/current"
 
 sudo ./scripts/build-sbin-init-from-go.sh \
   --goos linux --goarch amd64 \
   --install-base \
-  --base-dir "${BASE_DIR}" \
-  --base-version "${BASE_VERSION}"
+  --base-dir "${BASE_DIR}"
 ```
 
-This installs binaries under `${BASE_DIR}/${BASE_VERSION}/bin/`:
+This installs binaries under `${BASE_DIR}/bin/`:
 
 - `sbin-init`
 - `mergen-agent`
 - optional: `mergen-supervisor`, `mergen-telemetry` (built only if corresponding `cmd/...` has Go files)
 
-And updates `${BASE_DIR}/current -> ${BASE_VERSION}` symlink (unless `--no-current-link` is used).
-
-Place immutable base assets into the same version directory:
+Place immutable base assets into the same directory:
 
 ```bash
-export BASE_DIR="/var/lib/mergen/base"
-export BASE_VERSION="v20260306120000" # example
+export BASE_DIR="/var/lib/mergen/base/current"
 
-sudo install -d -m 0755 "${BASE_DIR}/${BASE_VERSION}"
-sudo install -m 0444 /path/to/vmlinux "${BASE_DIR}/${BASE_VERSION}/vmlinux"
-sudo install -m 0444 /path/to/golden-rootfs.ext4 "${BASE_DIR}/${BASE_VERSION}/golden-rootfs.ext4"
-sudo install -m 0444 /path/to/agent-rootfs.ext4 "${BASE_DIR}/${BASE_VERSION}/agent-rootfs.ext4"
+sudo install -d -m 0755 "${BASE_DIR}"
+sudo install -m 0444 /path/to/vmlinux "${BASE_DIR}/vmlinux"
+sudo install -m 0444 /path/to/golden-rootfs.ext4 "${BASE_DIR}/golden-rootfs.ext4"
+sudo install -m 0444 /path/to/agent-rootfs.ext4 "${BASE_DIR}/agent-rootfs.ext4"
 # optional env disk:
-sudo install -m 0444 /path/to/env-rootfs.ext4 "${BASE_DIR}/${BASE_VERSION}/env-rootfs.ext4"
-
-sudo ln -sfn "${BASE_VERSION}" "${BASE_DIR}/current"
+sudo install -m 0444 /path/to/env-rootfs.ext4 "${BASE_DIR}/env-rootfs.ext4"
 ```
 
-Only binaries and disk/kernel artifacts should be placed in `/var/lib/mergen/base/...` (do not place README/docs there).
+Only binaries and disk/kernel artifacts should be placed in `/var/lib/mergen/base/current` (do not place README/docs there).
 
 Host-side binaries are separate and should be installed to `/usr/local/bin` (example set):
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergend ./cmd/mergend
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen ./cmd/mergen
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-lifecycle ./cmd/mergen-lifecycle
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-forwarder ./cmd/mergen-forwarder
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/mergen-converter ./converter/cmd/mergen-converter
 
-sudo install -m 0755 /tmp/mergend /usr/local/bin/mergend
+sudo install -m 0755 /tmp/mergen /usr/local/bin/mergen
 sudo install -m 0755 /tmp/mergen-lifecycle /usr/local/bin/mergen-lifecycle
 sudo install -m 0755 /tmp/mergen-forwarder /usr/local/bin/mergen-forwarder
 sudo install -m 0755 /tmp/mergen-converter /usr/local/bin/mergen-converter
@@ -291,7 +289,7 @@ go run ./converter/cmd/mergen-converter \
   -image "$IMAGE"
 ```
 
-Generate or refresh `agent-rootfs.ext4` directly from base binaries (`/var/lib/mergen/base/<version>/bin`):
+Generate or refresh `agent-rootfs.ext4` directly from base binaries (`/var/lib/mergen/base/current/bin`):
 
 ```bash
 go run ./converter/cmd/mergen-converter \
@@ -351,7 +349,7 @@ Converter outputs:
 - `suggested-bootargs.txt` (`init=/sbin/init`)
 - `suggested-vm-request.json` (ready-to-edit payload for `POST /v1/vms`, points kernel/rootfs/agent to base dir)
 
-Base assets (kernel, golden rootfs, agent disk, optional env disk) should be managed under `/var/lib/mergen/base/<version>/...` and exposed via `/var/lib/mergen/base/current`.
+Base assets (kernel, golden rootfs, agent disk, optional env disk) should be managed directly under `/var/lib/mergen/base/current`.
 
 Delete a converted image rootfs bundle:
 
@@ -385,7 +383,6 @@ go run ./converter/cmd/mergen-converter doctor --json
 - `agent-rootfs.ext4`
 - `bin/sbin-init`
 - `bin/mergen-agent`
-- `base/current` symlink integrity (`current -> <version>`) when `--base-dir` ends with `current`
 - optional: `env-rootfs.ext4`, `bin/mergen-supervisor`, `bin/mergen-telemetry`
 
 `doctor` does not check payload rootfs because payload is image-specific and provided at VM create time.
@@ -396,7 +393,49 @@ CLI output uses emojis for readability:
 - `❌ FAIL`
 - `⚠️ WARN`
 
-### 4. End-to-end test with API and curl - Terminal-4
+### 4. Sync base and payload artifacts with S3/MinIO
+
+Copy [env.template](/Users/alperreha/Desktop/alper/workspace/go/mergen-fire/env.template) into your shell or process manager environment and set at least:
+
+- `MGR_S3_BUCKET`
+- `MGR_S3_USERNAME`
+- `MGR_S3_REGION`
+- `MGR_S3_ENDPOINT` for MinIO or another S3-compatible endpoint
+- `MGR_S3_ACCESS_KEY_ID` / `MGR_S3_SECRET_ACCESS_KEY`
+
+List what exists locally under `/var/lib/mergen/base/current` and `/var/lib/mergen/images`:
+
+```bash
+go run ./cmd/mergen images ls
+```
+
+Push shared base artifacts:
+
+```bash
+go run ./cmd/mergen images push base
+```
+
+Pull shared base artifacts onto a new machine:
+
+```bash
+go run ./cmd/mergen images pull base
+```
+
+Push one converted payload bundle:
+
+```bash
+go run ./cmd/mergen images push payload --image nginx:alpine
+```
+
+Pull that payload onto another machine:
+
+```bash
+go run ./cmd/mergen images pull payload --image nginx:alpine
+```
+
+Uploads and downloads emit byte progress continuously in the CLI, and the same progress model is reused internally so HTTP/SSE style progress endpoints can be added later without changing the transfer core.
+
+### 5. End-to-end test with API and curl - Terminal-4
 
 ```bash
 # create vm (payload from converter output, base rootfs/agent from /var/lib/mergen/base/current)
@@ -472,10 +511,21 @@ Environment variables:
 - `MGR_PORT_END` (default `40000`)
 - `MGR_GUEST_CIDR` (default `172.30.0.0/24`)
 - `MGR_BASE_ASSETS_DIR` (default `/var/lib/mergen/base/current`)
+- `MGR_IMAGES_ROOT` (default `/var/lib/mergen/images`)
 - `MGR_DEFAULT_KERNEL` (default `<MGR_BASE_ASSETS_DIR>/vmlinux`)
 - `MGR_DEFAULT_ROOTFS` (default `<MGR_BASE_ASSETS_DIR>/golden-rootfs.ext4`)
 - `MGR_DEFAULT_AGENT_DISK` (default `<MGR_BASE_ASSETS_DIR>/agent-rootfs.ext4`)
 - `MGR_DEFAULT_ENV_DISK` (default empty, optional)
+- `MGR_S3_ENDPOINT` (optional for AWS, required for MinIO/local S3)
+- `MGR_S3_REGION` (default `us-east-1`)
+- `MGR_S3_BUCKET`
+- `MGR_S3_PREFIX` (default `users`)
+- `MGR_S3_USERNAME`
+- `MGR_S3_ACCESS_KEY_ID`
+- `MGR_S3_SECRET_ACCESS_KEY`
+- `MGR_S3_SESSION_TOKEN` (optional)
+- `MGR_S3_USE_PATH_STYLE` (default `false`, set `true` for MinIO)
+- `MGR_PROGRESS_EVERY_MILLISECONDS` (default `250`)
 - `MGR_LOG_LEVEL` (default `info`, values: `debug|info|warn|error`)
 - `MGR_LOG_FORMAT` (default `console`, values: `console|json|text`)
 
@@ -486,7 +536,7 @@ Environment variables:
 Enable verbose debugging:
 
 ```bash
-MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=console go run ./cmd/mergend
+MGR_LOG_LEVEL=debug MGR_LOG_FORMAT=console go run ./cmd/mergen server
 ```
 
 `console` format prints colored output in this order: `[LEVEL] TIMESTAMP MESSAGE key=value...`
@@ -548,6 +598,7 @@ For per-VM extension hooks, create `lifecycle-hooks.json` under the VM config di
 go test ./...
 go test ./converter/...
 GOOS=linux GOARCH=amd64 go build ./runtime/...
+go run ./cmd/mergen --help
 ```
 
 ## Roadmap

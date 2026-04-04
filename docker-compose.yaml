@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # postgresql service - `psql -h localhost -U user -d postgres`
+  postgresql:
+    # Defualt Postgres Image - image: postgres:15.2-alpine
+    image: pgvector/pgvector:pg15-bookworm    
+    networks:
+      - aifnnet
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    restart: always
+    healthcheck:
+      test: pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 2s
+      retries: 10
+
+  # minio service
+  minio:
+    # image: minio/minio:RELEASE.2023-01-31T02-24-19Z
+    # image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: minio/minio:RELEASE.2023-10-24T04-42-36Z
+    networks:
+      - aifnnet
+    ports:
+      - 9090:9000
+      - 127.0.0.1:9091:9001
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=miniosecret
+    restart: always
+    volumes:
+      - ./volumes/minio:/data
+    # create the 'langfuse' bucket before starting the service
+    # command: server /data --address ":9000" --console-address ":9001"
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  # pgadmin service
+  pgadmin:
+    image: dpage/pgadmin4:9.7.0
+    networks:
+      - aifnnet
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=user@domain.com
+      - PGADMIN_DEFAULT_PASSWORD=1020304050
+    restart: always
+    profiles:
+      - dev
+
+networks:
+  aifnnet:
+    name: aifnnet
+    driver: bridge

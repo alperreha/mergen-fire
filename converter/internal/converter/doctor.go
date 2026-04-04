@@ -46,14 +46,6 @@ func RunDoctor(opts DoctorOptions) DoctorReport {
 		}
 	}
 
-	if filepath.Base(baseDir) == "current" {
-		symlinkCheck, resolvedDir := checkCurrentSymlink("base-current-symlink", baseDir, true)
-		appendCheck(symlinkCheck)
-		if symlinkCheck.Status == "pass" && resolvedDir != "" {
-			report.ResolvedBaseDir = resolvedDir
-		}
-	}
-
 	appendCheck(checkDirExists("base-dir", baseDir, true))
 	appendCheck(checkRegularFile("kernel", filepath.Join(baseDir, "vmlinux"), true))
 	appendCheck(checkExt4Image("golden-rootfs-ext4", filepath.Join(baseDir, "golden-rootfs.ext4"), true))
@@ -69,61 +61,6 @@ func RunDoctor(opts DoctorOptions) DoctorReport {
 
 	report.Passed = report.FailedRequired == 0
 	return report
-}
-
-func checkCurrentSymlink(name, path string, required bool) (DoctorCheck, string) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return buildMissingCheck(name, path, required, err), ""
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return DoctorCheck{
-			Name:     name,
-			Path:     path,
-			Status:   "fail",
-			Required: required,
-			Message:  "expected a symlink (current -> <version>)",
-		}, ""
-	}
-
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return DoctorCheck{
-			Name:     name,
-			Path:     path,
-			Status:   "fail",
-			Required: required,
-			Message:  fmt.Sprintf("resolve symlink failed: %v", err),
-		}, ""
-	}
-
-	targetInfo, err := os.Stat(resolved)
-	if err != nil {
-		return DoctorCheck{
-			Name:     name,
-			Path:     path,
-			Status:   "fail",
-			Required: required,
-			Message:  fmt.Sprintf("symlink target missing: %v", err),
-		}, resolved
-	}
-	if !targetInfo.IsDir() {
-		return DoctorCheck{
-			Name:     name,
-			Path:     path,
-			Status:   "fail",
-			Required: required,
-			Message:  "symlink target is not a directory",
-		}, resolved
-	}
-
-	return DoctorCheck{
-		Name:     name,
-		Path:     path,
-		Status:   "pass",
-		Required: required,
-		Message:  fmt.Sprintf("symlink points to %s", resolved),
-	}, resolved
 }
 
 func checkDirExists(name, path string, required bool) DoctorCheck {

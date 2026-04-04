@@ -11,7 +11,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/alperreha/mergen-fire/internal/config"
 	"github.com/alperreha/mergen-fire/internal/hooks"
+	"github.com/alperreha/mergen-fire/internal/images"
 	"github.com/alperreha/mergen-fire/internal/manager"
 	"github.com/alperreha/mergen-fire/internal/model"
 	"github.com/alperreha/mergen-fire/internal/network"
@@ -161,6 +163,10 @@ func newTestServerWithVM(t *testing.T) (*echo.Echo, string, string) {
 	}
 
 	e := echo.New()
-	Register(e, svc, nil)
+	Register(e, svc, images.NewService(config.Config{
+		DataRoot:      filepath.Join(base, "var", "lib", "mergen"),
+		BaseAssetsDir: filepath.Join(base, "var", "lib", "mergen", "base", "current"),
+		ImagesRoot:    filepath.Join(base, "var", "lib", "mergen", "images"),
+	}, nil), nil)
 	return e, vmID, kernelPath
 }
